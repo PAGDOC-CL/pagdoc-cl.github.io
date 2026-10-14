@@ -40,9 +40,6 @@ def _seed():
         db.execute(delete(core.Tenant).where(core.Tenant.id == TENANT_ID))
         db.commit()
 
-        # Persist the parent first. These models intentionally do not expose ORM
-        # relationships, so the test must not rely on unit-of-work relationship
-        # ordering to satisfy the database foreign key.
         db.add(core.Tenant(id=TENANT_ID, name="PostgreSQL Concurrency CI Tenant"))
         db.commit()
 
@@ -95,7 +92,7 @@ def test_postgres_serializes_document_file_versions(tmp_path):
                 )
                 with lock:
                     versions.append(row.version)
-        except Exception as exc:  # collected so the main thread can assert cleanly
+        except Exception as exc:
             with lock:
                 errors.append(exc)
 
@@ -156,5 +153,5 @@ def test_postgres_serializes_tenant_audit_chain():
         ).all()
         assert len(seals) == workers
         assert seals[0].previous_hash is None
-        for previous, current in zip(seals, seals[1:], strict=True):
+        for previous, current in zip(seals[:-1], seals[1:], strict=True):
             assert current.previous_hash == previous.event_hash

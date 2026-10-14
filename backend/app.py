@@ -5,6 +5,8 @@ be used with real personal/company documents until the production security gates
 in ROADMAP.md are completed.
 """
 import os
+import secrets
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Annotated
 
@@ -102,7 +104,18 @@ class Audit(Base):
     )
 
 
-app = FastAPI(title="PAGDOC Private API Prototype", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    Base.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(
+    title="PAGDOC Private API Prototype",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=lifespan,
+)
 
 
 @app.middleware("http")
@@ -113,11 +126,6 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Cache-Control"] = "no-store"
     return response
-
-
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(engine)
 
 
 def db_session():
@@ -145,7 +153,17 @@ def current_user(request: Request, db: Db) -> User:
 Auth = Annotated[User, Depends(current_user)]
 
 
-def editor(user: Auth) -> User:
+def csrf_guard(request: Request):
+    cookie = request.cookies.get("pagdoc_csrf")
+    header = request.headers.get("X-PAGDOC-CSRF")
+    if not cookie or not header or not secrets.compare_digest(cookie, header):
+        raise HTTPException(403, "CSRF validation failed")
+
+
+Csrf = Annotated[None, Depends(csrf_guard)]
+
+
+def editor(user: Auth, _: Csrf) -> User:
     if user.role not in ("admin", "editor"):
         raise HTTPException(403, "Insufficient permissions")
     return user
@@ -161,6 +179,13 @@ def admin(user: Auth) -> User:
 
 
 Admin = Annotated[User, Depends(admin)]
+
+
+def admin_write(user: Admin, _: Csrf) -> User:
+    return user
+
+
+AdminWrite = Annotated[User, Depends(admin_write)]
 
 
 def add_audit(db: Session, user: User, action: str, target_type: str, target_id: int):
@@ -230,6 +255,7 @@ def login(data: Credentials, response: Response, db: Db):
     )
     if not user or not hasher.verify(data.password, user.password_hash):
         raise HTTPException(401, "Invalid credentials")
+    csrf_token = secrets.token_urlsafe(32)
     response.set_cookie(
         "pagdoc_session",
         signer.dumps({"uid": user.id, "tid": user.tenant_id}),
@@ -239,12 +265,22 @@ def login(data: Credentials, response: Response, db: Db):
         max_age=3600,
         path="/",
     )
-    return {"authenticated": True, "role": user.role}
+    response.set_cookie(
+        "pagdoc_csrf",
+        csrf_token,
+        httponly=False,
+        secure=True,
+        samesite="strict",
+        max_age=3600,
+        path="/",
+    )
+    return {"authenticated": True, "role": user.role, "csrf_token": csrf_token}
 
 
 @app.post("/auth/logout")
-def logout(response: Response):
+def logout(response: Response, user: Auth, _: Csrf):
     response.delete_cookie("pagdoc_session", path="/", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie("pagdoc_csrf", path="/", secure=True, samesite="strict")
     return {"authenticated": False}
 
 
@@ -269,7 +305,7 @@ def users(user: Admin, db: Db):
 
 
 @app.post("/users", status_code=201)
-def add_user(data: UserIn, user: Admin, db: Db):
+def add_user(data: UserIn, user: AdminWrite, db: Db):
     email = data.email.strip().lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "Email already registered")
@@ -288,7 +324,7 @@ def add_user(data: UserIn, user: Admin, db: Db):
 
 
 @app.patch("/users/{user_id}/active")
-def set_user_active(user_id: int, data: ActiveIn, user: Admin, db: Db):
+def set_user_active(user_id: int, data: ActiveIn, user: AdminWrite, db: Db):
     target = db.scalar(
         select(User).where(User.id == user_id, User.tenant_id == user.tenant_id)
     )

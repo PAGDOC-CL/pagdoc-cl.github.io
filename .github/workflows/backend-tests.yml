@@ -19,13 +19,17 @@ jobs:
     env:
       PAGDOC_SECRET_KEY: ci-only-not-for-production-secret-at-least-32-characters
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
-      - name: Run isolation and authorization tests
+      - name: Validate schema migration
+        env:
+          PAGDOC_DATABASE_URL: sqlite:///./ci_schema_validation.sqlite3
+        run: python -m alembic upgrade head
+      - name: Run security, isolation and module tests
         run: python -m pytest -q test_app.py

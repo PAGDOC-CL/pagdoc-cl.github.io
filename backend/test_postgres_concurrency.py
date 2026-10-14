@@ -39,7 +39,13 @@ def _seed():
         db.execute(delete(core.User).where(core.User.tenant_id == TENANT_ID))
         db.execute(delete(core.Tenant).where(core.Tenant.id == TENANT_ID))
         db.commit()
+
+        # Persist the parent first. These models intentionally do not expose ORM
+        # relationships, so the test must not rely on unit-of-work relationship
+        # ordering to satisfy the database foreign key.
         db.add(core.Tenant(id=TENANT_ID, name="PostgreSQL Concurrency CI Tenant"))
+        db.commit()
+
         db.add(
             core.User(
                 id=USER_ID,

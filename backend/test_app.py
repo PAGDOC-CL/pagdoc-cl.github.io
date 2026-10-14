@@ -96,3 +96,35 @@ def test_invalid_document_type_rejected(client):
     response = client.post("/documents", json={"project_id": 10, "title": "Prueba",
                                                "subject_type": "unknown", "subject_name": "Demo"})
     assert response.status_code == 422
+
+
+def test_document_creation_is_tenant_scoped_and_audited(client):
+    auth(client, 1, 1)
+    response = client.post("/documents", json={
+        "project_id": 10, "title": "Registro de ejemplo", "subject_type": "vehicle",
+        "subject_name": "VEH-DEMO", "expires_on": "2099-12-31"
+    })
+    assert response.status_code == 201
+    document_id = response.json()["id"]
+    assert any(d["id"] == document_id for d in client.get("/documents").json())
+    assert any(a["action"] == "document.create" and a["target_id"] == document_id
+               for a in client.get("/audit").json())
+    auth(client, 2, 2)
+    assert all(d["id"] != document_id for d in client.get("/documents").json())
+    assert all(a["target_id"] != document_id for a in client.get("/audit").json())
+
+def test_viewer_cannot_read_audit(client):
+    with api.SessionLocal() as db:
+        db.add(api.User(id=4, tenant_id=1, email="lector@example.invalid",
+                        password_hash=api.hasher.hash("demo-password-only"), role="viewer"))
+        db.commit()
+    auth(client, 4, 1)
+    assert client.get("/audit").status_code == 403
+
+def test_document_requires_valid_project_identifier(client):
+    auth(client, 1, 1)
+    response = client.post("/documents", json={
+        "project_id": -1, "title": "Registro", "subject_type": "project",
+        "subject_name": "Ejemplo"
+    })
+    assert response.status_code == 422

@@ -1,9 +1,10 @@
 """PAGDOC private application entrypoint.
 
-Importing requirements_api registers tenant-scoped requirement and alert routes
-on the core FastAPI application before the server starts.
+Importing feature modules registers tenant-scoped routes on the core FastAPI
+application before the server starts.
 """
 import app as core
+import document_history  # noqa: F401
 import requirements_api  # noqa: F401
 
 app = core.app

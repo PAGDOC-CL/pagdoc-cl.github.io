@@ -1,15 +1,13 @@
 """PAGDOC private API prototype. Not production ready. Never use real company data."""
 import os
-import secrets
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import date, datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 DB_URL = os.getenv("PAGDOC_DATABASE_URL", "sqlite:///./pagdoc_dev.sqlite3")
@@ -97,14 +95,14 @@ def editor(user: Auth) -> User:
 Editor = Annotated[User, Depends(editor)]
 
 class Credentials(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
 
 class ProjectIn(BaseModel):
     name: str = Field(min_length=2, max_length=150)
 
 class DocumentIn(BaseModel):
-    project_id: int
+    project_id: int = Field(gt=0)
     title: str = Field(min_length=2, max_length=200)
     subject_type: str = Field(pattern="^(worker|vehicle|company|project)$")
     subject_name: str = Field(min_length=2, max_length=150)

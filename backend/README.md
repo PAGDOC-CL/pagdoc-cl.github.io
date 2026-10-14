@@ -1,45 +1,54 @@
 # PAGDOC — API privada (prototipo técnico)
 
-**No desplegar en producción ni cargar datos reales.** Este backend es una base técnica aislada del sitio público de GitHub Pages. GitHub Pages aloja HTML estático y no ejecuta Python, bases de datos ni autenticación.
+**No desplegar en producción ni cargar datos reales.** Este backend permanece aislado del sitio público de GitHub Pages. GitHub Pages solo aloja la landing y la demostración estática; no ejecuta esta API, bases de datos ni autenticación privada.
 
 ## Funcionalidad incorporada
-- Usuarios vinculados a una empresa (tenant) y roles admin/editor/viewer.
-- Autenticación con hash Argon2, cookie firmada HttpOnly/Secure/SameSite Strict de 1 hora.
-- Proyectos y documentos siempre consultados por tenant.
-- Semáforo documental calculado según fecha.
-- Bitácora inicial de creación de proyectos y documentos.
-- API con validación de entrada; no permite carga de archivos.
+- Arquitectura multiempresa (tenant) con separación lógica de consultas y modificaciones.
+- Roles `admin`, `editor` y `viewer`.
+- Usuarios: listado, alta y activación/desactivación por administradores.
+- Proyectos, trabajadores y vehículos: alta, consulta y activación/desactivación.
+- Documentos: alta, consulta, asociación opcional a proyecto y semáforo por vigencia.
+- Dashboard: total documental, estados y entidades activas.
+- Auditoría inicial por tenant con usuario, acción, tipo de recurso, identificador y fecha.
+- Autenticación con hash Argon2 y cookie firmada `HttpOnly`, `Secure`, `SameSite=Strict`.
+- Protección CSRF de doble token para operaciones de escritura y cierre de sesión.
+- Cabeceras defensivas: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` y `Cache-Control`.
+- Validación de entradas mediante Pydantic.
+- API sin carga de archivos: el almacenamiento documental real se mantiene bloqueado hasta completar su diseño seguro.
 
-## Ejecutar localmente (solo pruebas)
-1. Instalar Python 3.11+ y crear entorno virtual.
+## Estado de pruebas
+
+GitHub Actions ejecuta el workflow `.github/workflows/backend-tests.yml` con Python 3.12.
+
+**Resultado verificado de la etapa actual: 26 pruebas aprobadas.** La suite cubre autenticación, cookies, CSRF, aislamiento entre empresas, roles, usuarios, proyectos, trabajadores, vehículos, documentos, dashboard, auditoría y prohibición de modificar recursos de otro tenant.
+
+## Ejecutar localmente (solo pruebas con datos ficticios)
+1. Instalar Python 3.11+ y crear un entorno virtual.
 2. `pip install -r requirements.txt`
-3. Configurar `PAGDOC_SECRET_KEY` con un valor aleatorio de al menos 32 caracteres.
-4. `uvicorn app:app --reload` desde la carpeta `backend`.
+3. Definir `PAGDOC_SECRET_KEY` con un valor aleatorio de al menos 32 caracteres.
+4. Opcionalmente definir `PAGDOC_DATABASE_URL`; por defecto se usa SQLite local.
+5. Ejecutar `uvicorn app:app --reload` desde la carpeta `backend`.
 
-La base SQLite se crea localmente al iniciar. No se incluyen cuentas, credenciales ni datos reales. Para crear cuentas de prueba se necesita un procedimiento local de aprovisionamiento seguro, aún pendiente.
+No se incluyen cuentas, credenciales ni información real.
 
-## Bloqueos antes de un despliegue real
-- PostgreSQL gestionado y migraciones versionadas; política de respaldos/restauración.
-- Aprovisionamiento seguro de usuarios, recuperación de contraseña y MFA.
-- Protección anti fuerza bruta, CSRF, revocación de sesiones, CORS y HTTPS detrás de proxy confiable.
-- Pruebas automatizadas de aislamiento entre tenants y controles de autorización.
-- Almacenamiento privado de archivos, antivirus, cifrado, cuotas y descargas autorizadas.
-- Registro de auditoría completo e inmutable, monitoreo y alertas.
-- Gestión de secretos, seguridad de dependencias, pruebas de penetración y revisión de privacidad.
-- Infraestructura y dominio con costos aprobados expresamente por el propietario.
+## Aprovisionamiento local de demostración
 
-**La landing page y demo pública no deben conectarse a esta API antes de completar los controles.**
+`bootstrap_demo.py` crea una empresa ficticia y un administrador de prueba. Se bloquea salvo que `PAGDOC_ALLOW_DEMO_BOOTSTRAP=YES` esté definido y que la base configurada sea SQLite. Solo admite correos terminados en `@example.invalid`, solicita la contraseña mediante entrada oculta y no envía mensajes.
 
-## Aprovisionamiento de prueba (solo local)
+No debe utilizarse con MUFAS CHILE, trabajadores reales, clientes reales ni infraestructura pública.
 
-El script `bootstrap_demo.py` permite crear una empresa ficticia y un administrador de prueba. Se bloquea salvo que `PAGDOC_ALLOW_DEMO_BOOTSTRAP=YES` esté definido y que la base configurada sea SQLite. Solicita contraseña por entrada oculta y solo admite correos con dominio `@example.invalid`.
+## Controles aún obligatorios antes de producción
+- PostgreSQL y migraciones versionadas.
+- Sesiones revocables del lado servidor.
+- Control de intentos de inicio de sesión y bloqueo/rate limiting.
+- MFA y recuperación segura de acceso.
+- Invitación y alta de usuarios con verificación.
+- Almacenamiento privado de archivos con autorización, cifrado, límites, validación de tipo y análisis antimalware.
+- Historial/versionado documental y trazabilidad completa de accesos/descargas.
+- Copias de seguridad con restauración probada.
+- Monitoreo, alertas operacionales y gestión de secretos.
+- Pruebas de accesibilidad, rendimiento, concurrencia y seguridad.
+- Revisión de privacidad, retención y eliminación de datos.
+- Infraestructura y dominio con cualquier costo aprobado expresamente por el propietario.
 
-Este script **no crea usuarios reales**, no envía invitaciones y no proporciona recuperación de contraseñas. No debe ejecutarse con datos de MUFAS CHILE ni en infraestructura pública.
-
-## Pruebas automatizadas
-
-El workflow `.github/workflows/backend-tests.yml` ejecuta `pytest` para verificar aislamiento por empresa, autenticación, autorización, validación de entradas y auditoría. Que el código esté guardado no equivale a que todas las pruebas hayan pasado: revisar el estado de la ejecución en GitHub Actions.
-
-## Seguridad pendiente
-
-En particular, antes de publicar la API hay que añadir protección CSRF para operaciones que usen cookies, control de intentos de inicio de sesión, revocación real de sesiones, alta de usuarios con verificación, MFA, migraciones y pruebas de seguridad. Las cookies Secure requieren HTTPS.
+**La landing y la demo pública no deben conectarse a esta API ni procesar documentos reales hasta completar estos controles.**

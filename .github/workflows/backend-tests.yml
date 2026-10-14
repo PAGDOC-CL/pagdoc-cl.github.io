@@ -40,9 +40,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+          cache-dependency-path: backend/requirements.lock
+      - name: Install tested dependency pins
+        run: python -m pip install -r requirements.lock
+      - name: Verify dependency integrity
+        run: python -m pip check
       - name: Compile Python sources
         run: python -m compileall -q .
       - name: Guard public repository from private artifacts and common secrets

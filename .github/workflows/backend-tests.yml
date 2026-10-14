@@ -13,11 +13,26 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pagdoc_ci
+          POSTGRES_PASSWORD: pagdoc_ci_password
+          POSTGRES_DB: pagdoc_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: backend
     env:
       PAGDOC_SECRET_KEY: ci-only-not-for-production-secret-at-least-32-characters
+      PAGDOC_ENCRYPTION_KEY: mFmtvXGV6G9z6uAQo4-EyWzZi-DLZfHototZ6LtCL_4=
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -27,9 +42,13 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
-      - name: Validate schema migration
+      - name: Validate schema migration on SQLite
         env:
           PAGDOC_DATABASE_URL: sqlite:///./ci_schema_validation.sqlite3
+        run: python -m alembic upgrade head
+      - name: Validate schema migration on PostgreSQL
+        env:
+          PAGDOC_DATABASE_URL: postgresql+psycopg://pagdoc_ci:pagdoc_ci_password@localhost:5432/pagdoc_ci
         run: python -m alembic upgrade head
       - name: Run security, isolation and module tests
         run: python -m pytest -q test_app.py

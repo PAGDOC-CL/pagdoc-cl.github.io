@@ -27,3 +27,28 @@ Actualización: 13 de octubre de 2026.
 - La demo pública no autentica usuarios ni almacena documentación.
 - El backend no está desplegado ni habilitado para producción.
 - No se enviarán correos ni invitaciones sin autorización del propietario.
+
+## Criterios para declarar PAGDOC 100 % operativo
+
+Cada criterio debe demostrarse con pruebas, no solo con código:
+- [ ] Sitio comercial y demo accesibles en HTTPS.
+- [ ] CI de backend en verde, con pruebas de autorización y aislamiento multiempresa.
+- [ ] Inicio de sesión seguro, MFA, cierre de sesión revocable y recuperación de acceso.
+- [ ] Alta, baja y edición de empresas, usuarios y permisos, con trazabilidad.
+- [ ] Gestión de proyectos, trabajadores, vehículos y documentación, con búsquedas y filtros.
+- [ ] Carga, descarga y versionado de archivos privados, con controles de tamaño, tipo y malware.
+- [ ] Reglas de vigencia por tipo documental, alertas y reportes exportables.
+- [ ] Registro de auditoría íntegro y trazabilidad de modificaciones.
+- [ ] PostgreSQL con migraciones y copias de seguridad restauradas en prueba.
+- [ ] Pruebas de aislamiento de empresas, accesibilidad, rendimiento y seguridad.
+- [ ] Políticas de privacidad y retención de documentos aprobadas.
+- [ ] Entorno privado desplegado con dominio y costos autorizados expresamente.
+- [ ] Piloto con datos ficticios validado de extremo a extremo.
+- [ ] Autorización expresa antes de procesar documentación real.
+
+### Registro de avances del 13 de octubre de 2026
+- Se incorporó `bootstrap_demo.py` para aprovisionamiento local restringido.
+- Se incorporó CI de pruebas automáticas en GitHub Actions.
+- Se amplió `test_app.py` a 14 pruebas de autenticación, autorización, auditoría y aislamiento.
+- Se reforzó la validación de entradas en `app.py`.
+- El estado de CI y la publicación de backend siguen pendientes de verificación.

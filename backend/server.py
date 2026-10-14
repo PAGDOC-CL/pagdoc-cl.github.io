@@ -16,5 +16,6 @@ import document_history  # noqa: E402,F401
 import requirements_api  # noqa: E402,F401
 import alerts_api  # noqa: E402,F401
 import ops_api  # noqa: E402,F401
+import query_api  # noqa: E402,F401
 
 app = core.app

@@ -1,61 +1,108 @@
 # PAGDOC — API privada (prototipo técnico)
 
-**No desplegar en producción ni cargar datos reales.** Este backend permanece aislado del sitio público de GitHub Pages. GitHub Pages solo aloja la landing y la demostración estática; no ejecuta esta API, bases de datos ni autenticación privada.
+**No desplegar en producción ni cargar datos reales todavía.** Este backend permanece separado del sitio público de GitHub Pages. La landing y la demostración estática no ejecutan esta API ni almacenan documentación privada.
+
+## Entrada del servidor privado
+La aplicación ensamblada se expone desde `server.py` y valida la configuración antes de registrar módulos privados:
+
+```bash
+uvicorn server:app --reload
+```
+
+`server.py` instala primero la auditoría sellada y después registra historial documental, requisitos, alertas internas, búsqueda, retención, readiness y hardening HTTP.
 
 ## Funcionalidad incorporada
-- Arquitectura multiempresa (tenant) con separación lógica de consultas y modificaciones.
+- Arquitectura multiempresa con separación lógica por tenant.
 - Roles `admin`, `editor` y `viewer`.
-- Usuarios: listado, alta y activación/desactivación por administradores.
-- Proyectos, trabajadores y vehículos: alta, consulta y activación/desactivación.
-- Documentos: alta, consulta, asociación opcional a proyecto y semáforo por vigencia.
-- Dashboard: total documental, estados y entidades activas.
-- Auditoría por tenant con usuario, acción, tipo de recurso, identificador y fecha.
-- Autenticación con hash Argon2.
-- Sesiones opacas almacenadas del lado servidor, con vencimiento y revocación.
-- Cierre de sesión individual, cierre de todas las sesiones y revocación al desactivar usuarios.
-- Cookies `HttpOnly`, `Secure`, `SameSite=Strict` y protección CSRF de doble token validada contra la sesión.
-- Limitación de intentos fallidos de login por correo y origen anonimizado.
-- Cabeceras defensivas, incluida `Permissions-Policy`.
-- Validación de entradas mediante Pydantic.
-- Soporte de URL PostgreSQL mediante `psycopg`.
-- Esquema versionado con Alembic en `migrations/`.
-- API sin carga de archivos: el almacenamiento documental real se mantiene bloqueado hasta completar su diseño seguro.
+- Gestión de usuarios, proyectos, trabajadores, vehículos y documentos.
+- Dashboard documental y semáforo por vigencia.
+- Búsqueda paginada por texto, estado, tipo y proyecto.
+- Argon2 para contraseñas y sesiones opacas almacenadas del lado servidor.
+- Revocación individual/global de sesiones y revocación al desactivar usuarios.
+- Cookies `HttpOnly`, `Secure`, `SameSite=Strict`, CSRF y límite de intentos de login.
+- MFA TOTP y recuperación administrativa de acceso.
+- Requisitos documentales configurables, vigencias y alertas internas opt-in.
+- Historial de cambios de metadatos documentales.
+- Auditoría por tenant con sellos HMAC encadenados para eventos nuevos y endpoint administrativo de verificación.
+- Motor de retención **no destructivo** con reglas por tipo documental, vista previa y legal hold.
+- Readiness probe que exige PostgreSQL y revisión Alembic exacta en staging/producción.
+- CSP restrictiva y HSTS para entornos staging/production, además de las cabeceras defensivas del núcleo.
+- PostgreSQL mediante `psycopg` y migraciones Alembic.
 
-## Estado de pruebas
+## Archivos privados: estado real
+Existe una capa de servicio para archivos, pero los endpoints binarios HTTP siguen deliberadamente deshabilitados.
 
-GitHub Actions ejecuta el workflow `.github/workflows/backend-tests.yml` con Python 3.12. La CI también crea una base limpia y ejecuta `alembic upgrade head` antes de la suite.
+La implementación actual incorpora:
+- validación de tamaño y firma/tipo para PDF, JPEG y PNG;
+- cifrado local de prototipo con Fernet;
+- aislamiento físico por tenant dentro del store local de pruebas;
+- registro de versiones binarias con `object_key`, tamaño, SHA-256, tipo, scanner y creador;
+- verificación de integridad SHA-256 antes de devolver bytes desde la capa de servicio;
+- gateway de ingreso fail-closed: si el scanner falla o rechaza el archivo, no se almacena;
+- limpieza del objeto si falla el registro transaccional de la versión.
 
-**Resultado verificado de la etapa actual: 30 pruebas aprobadas y migración inicial aplicada correctamente.** La suite cubre autenticación, sesiones revocables, límite de intentos, cookies, CSRF, aislamiento entre empresas, roles, usuarios, proyectos, trabajadores, vehículos, documentos, dashboard, auditoría y prohibición de modificar recursos de otro tenant.
+**Esto no equivale a almacenamiento de producción.** Antes de habilitar carga/descarga HTTP deben existir un scanner antimalware real y un objeto privado de almacenamiento autorizado. No hay un scanner ficticio conectado al servidor real ni se permite saltarse ese control.
 
-## Ejecutar localmente (solo pruebas con datos ficticios)
-1. Instalar Python 3.11+ y crear un entorno virtual.
-2. `pip install -r requirements.txt`
-3. Definir `PAGDOC_SECRET_KEY` con un valor aleatorio de al menos 32 caracteres.
-4. Copiar `.env.example` como referencia de variables, sin subir el `.env` real.
-5. Para crear el esquema versionado: `python -m alembic upgrade head`.
-6. Ejecutar `uvicorn app:app --reload` desde la carpeta `backend`.
+## Retención y privacidad
+`retention_api.py` permite configurar ventanas posteriores al vencimiento, consultar candidatos y aplicar/revocar legal holds. El endpoint de vista previa responde explícitamente con `destructive_actions_enabled: false`.
 
-No se incluyen cuentas, credenciales ni información real.
+No hay endpoint que elimine documentos por retención. La eliminación destructiva permanece bloqueada hasta aprobar la política de privacidad/retención, respaldo, trazabilidad y procedimiento operacional.
 
-## PostgreSQL
+## Auditoría: alcance y límite
+Los nuevos eventos sensibles pueden quedar sellados mediante una cadena HMAC por tenant. La verificación detecta modificaciones, huecos o inserciones no selladas dentro del tramo controlado.
 
-El código incorpora el driver `psycopg` y Alembic acepta `PAGDOC_DATABASE_URL`. Esto prepara el proyecto para PostgreSQL, pero **aún no se ha validado contra una instancia PostgreSQL real**. Esa comprobación debe completarse antes de una beta privada.
+No se debe describir esta función como WORM o inmutabilidad absoluta: para demostrar la eliminación del último extremo de una cadena hace falta un anclaje externo/servicio de logging independiente, todavía pendiente.
 
-## Aprovisionamiento local de demostración
+## Esquema y migraciones
+El esquema está versionado hasta:
 
-`bootstrap_demo.py` crea una empresa ficticia y un administrador de prueba. Se bloquea salvo que `PAGDOC_ALLOW_DEMO_BOOTSTRAP=YES` esté definido y que la base configurada sea SQLite. Solo admite correos terminados en `@example.invalid`, solicita la contraseña mediante entrada oculta y no envía mensajes.
+```text
+0001_initial
+0002_user_mfa
+0003_requirements
+0004_document_revisions
+0005_alert_inbox
+0006_document_file_versions
+0007_audit_seals
+0008_retention_policy
+```
 
-No debe utilizarse con MUFAS CHILE, trabajadores reales, clientes reales ni infraestructura pública.
+La CI ejecuta `alembic upgrade head` desde una base limpia tanto en SQLite como en PostgreSQL 17.
 
-## Controles aún obligatorios antes de producción
-- MFA y recuperación segura de acceso.
-- Validación real de PostgreSQL y pruebas de concurrencia/transacciones.
-- Almacenamiento privado de archivos con autorización, cifrado, límites, validación de tipo y análisis antimalware.
-- Historial/versionado documental y trazabilidad completa de accesos/descargas.
-- Copias de seguridad con restauración probada.
-- Monitoreo, alertas operacionales y gestión de secretos.
-- Pruebas de accesibilidad, rendimiento, concurrencia y seguridad.
-- Revisión de privacidad, retención y eliminación de datos.
-- Infraestructura y dominio con cualquier costo aprobado expresamente por el propietario.
+## Estado de pruebas verificado
+El workflow `.github/workflows/backend-tests.yml` usa Python 3.12 y PostgreSQL 17. La última ejecución verificada completó correctamente:
 
-**La landing y la demo pública no deben conectarse a esta API ni procesar documentos reales hasta completar estos controles.**
+- **121 pruebas** en la suite principal del backend;
+- **1 prueba** end-to-end del servidor privado ensamblado con datos ficticios;
+- **2 pruebas** de concurrencia real sobre PostgreSQL;
+- **124 pruebas aprobadas en total**;
+- migraciones `0001` a `0008` aplicadas correctamente en SQLite y PostgreSQL;
+- backup y restauración PostgreSQL verificados;
+- guard del repositorio público aprobado.
+
+La suite cubre autenticación, MFA, sesiones, rate limiting, CSRF, roles, aislamiento por tenant, requisitos, alertas, historial, búsqueda, retención, almacenamiento cifrado de prototipo, gateway fail-closed, integridad de auditoría, readiness, cabeceras HTTP y concurrencia.
+
+## Configuración segura de entorno
+`.env.example` contiene únicamente placeholders. Nunca se debe subir un `.env` real.
+
+El arranque mediante `server.py` falla de forma cerrada si la configuración es insegura. En staging/producción se requiere:
+- PostgreSQL;
+- `PAGDOC_SECRET_KEY` suficientemente largo;
+- clave Fernet válida;
+- `PAGDOC_PUBLIC_ORIGIN` HTTPS.
+
+## Aprovisionamiento local ficticio
+`bootstrap_demo.py` solo funciona si se define `PAGDOC_ALLOW_DEMO_BOOTSTRAP=YES`, la base es SQLite y el correo termina en `@example.invalid`. No envía mensajes y no debe utilizarse con información real.
+
+## Controles pendientes antes de producción
+- scanner antimalware real y almacenamiento privado de objetos;
+- endpoints privados de carga/descarga sobre esa infraestructura;
+- gestión/rotación segura de secretos y llaves en infraestructura autorizada;
+- monitoreo, métricas y alertas operacionales;
+- anclaje externo/inmutable de evidencia de auditoría;
+- pruebas formales de accesibilidad, rendimiento y seguridad ofensiva controlada;
+- aprobación formal de privacidad, retención y eliminación;
+- despliegue privado con infraestructura y costos expresamente autorizados;
+- autorización explícita antes de procesar documentación real.
+
+No se incluyen cuentas, credenciales ni información real de MUFAS CHILE, trabajadores o clientes.

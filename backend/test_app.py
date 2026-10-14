@@ -61,3 +61,38 @@ def test_viewer_cannot_write(client):
         db.commit()
     auth(client, 3, 1)
     assert client.post("/projects", json={"name": "No autorizado"}).status_code == 403
+
+
+def test_wrong_password_is_rejected(client):
+    response = client.post("/auth/login", json={"email": "uno@example.invalid", "password": "incorrect"})
+    assert response.status_code == 401
+    assert "pagdoc_session" not in response.cookies
+
+def test_login_sets_protected_cookie(client):
+    response = client.post("/auth/login", json={"email": "uno@example.invalid", "password": "testpass-one"})
+    assert response.status_code == 200
+    cookie = response.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert "secure" in cookie
+    assert "samesite=strict" in cookie
+
+def test_editor_creates_project_and_audit_event(client):
+    auth(client, 1, 1)
+    response = client.post("/projects", json={"name": "Proyecto ficticio nuevo"})
+    assert response.status_code == 201
+    project_id = response.json()["id"]
+    assert project_id in [p["id"] for p in client.get("/projects").json()]
+    assert any(a["action"] == "project.create" and a["target_id"] == project_id
+               for a in client.get("/audit").json())
+
+def test_tenant_audit_is_isolated(client):
+    auth(client, 1, 1)
+    client.post("/projects", json={"name": "Registro de auditoría de Uno"})
+    auth(client, 2, 2)
+    assert client.get("/audit").json() == []
+
+def test_invalid_document_type_rejected(client):
+    auth(client, 1, 1)
+    response = client.post("/documents", json={"project_id": 10, "title": "Prueba",
+                                               "subject_type": "unknown", "subject_name": "Demo"})
+    assert response.status_code == 422

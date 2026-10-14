@@ -65,5 +65,5 @@ jobs:
           docker exec "$PG_CONTAINER" createdb -U pagdoc_ci pagdoc_ci
           docker exec "$PG_CONTAINER" pg_restore -U pagdoc_ci -d pagdoc_ci /tmp/pagdoc_ci.dump
           test "$(docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -tAc "SELECT count(*) FROM tenants WHERE name='CI Backup Tenant';")" = "1"
-      - name: Run security, isolation, runtime, storage, requirements, history, alert and gateway tests
-        run: python -m pytest -q test_app.py test_runtime_config.py test_storage.py test_file_gateway.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py
+      - name: Run security, isolation, runtime, storage, file-version, requirements, history, alert and gateway tests
+        run: python -m pytest -q test_app.py test_runtime_config.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py

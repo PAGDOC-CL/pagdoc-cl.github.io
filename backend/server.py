@@ -17,5 +17,6 @@ import requirements_api  # noqa: E402,F401
 import alerts_api  # noqa: E402,F401
 import ops_api  # noqa: E402,F401
 import query_api  # noqa: E402,F401
+import security_hardening  # noqa: E402,F401
 
 app = core.app

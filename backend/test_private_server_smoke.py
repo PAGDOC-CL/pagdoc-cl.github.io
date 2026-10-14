@@ -77,10 +77,11 @@ def test_fictitious_private_server_workflow():
             requirement_id = requirement.json()["id"]
 
             link = client.post(
-                f"/requirements/{requirement_id}/documents/{document_id}",
-                json={"issued_on": date.today().isoformat()},
+                f"/documents/{document_id}/policy",
+                json={"requirement_id": requirement_id, "issued_on": date.today().isoformat()},
             )
             assert link.status_code == 200
+            assert link.json()["status"] == "expiring"
 
             search = client.get("/search/documents?status=expiring&q=ficticio")
             assert search.status_code == 200

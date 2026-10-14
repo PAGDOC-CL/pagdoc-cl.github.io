@@ -54,5 +54,15 @@ jobs:
         env:
           PAGDOC_DATABASE_URL: postgresql+psycopg://pagdoc_ci:pagdoc_ci_password@localhost:5432/pagdoc_ci
         run: python -m alembic upgrade head
+      - name: Verify PostgreSQL backup and restore
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -c "INSERT INTO tenants (name) VALUES ('CI Backup Tenant');"
+          docker exec "$PG_CONTAINER" pg_dump -U pagdoc_ci -Fc -f /tmp/pagdoc_ci.dump pagdoc_ci
+          docker exec "$PG_CONTAINER" dropdb -U pagdoc_ci pagdoc_ci
+          docker exec "$PG_CONTAINER" createdb -U pagdoc_ci pagdoc_ci
+          docker exec "$PG_CONTAINER" pg_restore -U pagdoc_ci -d pagdoc_ci /tmp/pagdoc_ci.dump
+          test "$(docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -tAc "SELECT count(*) FROM tenants WHERE name='CI Backup Tenant';")" = "1"
       - name: Run security, isolation and module tests
         run: python -m pytest -q test_app.py

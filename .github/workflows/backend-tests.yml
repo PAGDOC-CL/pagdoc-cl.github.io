@@ -66,7 +66,7 @@ jobs:
           docker exec "$PG_CONTAINER" pg_restore -U pagdoc_ci -d pagdoc_ci /tmp/pagdoc_ci.dump
           test "$(docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -tAc "SELECT count(*) FROM tenants WHERE name='CI Backup Tenant';")" = "1"
       - name: Run security, isolation, runtime, readiness, query, storage, file-version, requirements, history, alert, gateway and audit-integrity tests
-        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py
+        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py
       - name: Run PostgreSQL concurrency regression tests
         env:
           PAGDOC_DATABASE_URL: postgresql+psycopg://pagdoc_ci:pagdoc_ci_password@localhost:5432/pagdoc_ci

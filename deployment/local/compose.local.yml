@@ -1,0 +1,54 @@
+name: pagdoc-private
+services:
+  database:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: pagdoc
+      POSTGRES_USER: pagdoc
+      POSTGRES_PASSWORD: ${PAGDOC_POSTGRES_PASSWORD:?Generate private configuration first}
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U pagdoc -d pagdoc']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+  api:
+    build:
+      context: ../..
+      dockerfile: deployment/Dockerfile
+    environment:
+      PAGDOC_ENVIRONMENT: staging
+      PAGDOC_DATABASE_URL: ${PAGDOC_DATABASE_URL:?Generate private configuration first}
+      PAGDOC_SECRET_KEY: ${PAGDOC_SECRET_KEY:?Generate private configuration first}
+      PAGDOC_ENCRYPTION_KEY: ${PAGDOC_ENCRYPTION_KEY:?Generate private configuration first}
+      PAGDOC_PUBLIC_ORIGIN: https://localhost:8443
+    command: [sh, -c, 'python -m alembic upgrade head && exec uvicorn server:app --host 0.0.0.0 --port 8000 --no-access-log']
+    depends_on:
+      database:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready',timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 30
+    restart: unless-stopped
+  proxy:
+    image: caddy:2
+    ports: ['127.0.0.1:8443:8443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  database:
+  caddy_data:
+  caddy_config:

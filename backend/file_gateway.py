@@ -23,6 +23,12 @@ class ScanVerdict:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class IngestResult:
+    stored: StoredObject
+    scan: ScanVerdict
+
+
 class MalwareScanner(Protocol):
     def scan(self, data: bytes, media_type: str) -> ScanVerdict:
         """Return a verdict for the exact bytes that would be stored."""
@@ -40,7 +46,7 @@ class SecureDocumentGateway:
         original_name: str,
         media_type: str,
         data: bytes,
-    ) -> StoredObject:
+    ) -> IngestResult:
         if tenant_id <= 0:
             raise GatewayError("Invalid tenant")
 
@@ -61,6 +67,7 @@ class SecureDocumentGateway:
             raise GatewayError(detail)
 
         try:
-            return self.store.put(tenant_id, original_name, media_type, data)
+            stored = self.store.put(tenant_id, original_name, media_type, data)
         except StorageError as exc:
             raise GatewayError(str(exc)) from exc
+        return IngestResult(stored=stored, scan=verdict)

@@ -2,10 +2,8 @@
 import os
 from datetime import date, timedelta
 
-os.environ.setdefault(
-    "PAGDOC_SECRET_KEY",
-    "test-only-not-for-production-secret-at-least-32-characters",
-)
+os.environ.setdefault("PAGDOC_SECRET_KEY", "test-only-not-for-production-secret-at-least-32-characters")
+os.environ.setdefault("PAGDOC_ENCRYPTION_KEY", "mFmtvXGV6G9z6uAQo4-EyWzZi-DLZfHototZ6LtCL_4=")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,14 +15,10 @@ import app as api
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    engine = create_engine(
-        "sqlite:///" + str(tmp_path / "test.sqlite3"),
-        connect_args={"check_same_thread": False},
-    )
+    engine = create_engine("sqlite:///" + str(tmp_path / "test.sqlite3"), connect_args={"check_same_thread": False})
     api.Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     monkeypatch.setattr(api, "SessionLocal", factory)
-
     with factory() as db:
         db.add_all([api.Tenant(id=1, name="Ficticia Uno"), api.Tenant(id=2, name="Ficticia Dos")])
         db.add_all([
@@ -44,13 +38,15 @@ def client(tmp_path, monkeypatch):
             api.Document(id=200, tenant_id=2, project_id=20, title="Documento Dos", subject_type="project", subject_name="Proyecto Dos", expires_on=date.today() - timedelta(days=1)),
         ])
         db.commit()
-
     with TestClient(api.app, base_url="https://testserver") as test_client:
         yield test_client
 
 
-def auth(client, email="uno@example.invalid", password="testpass-one"):
-    response = client.post("/auth/login", json={"email": email, "password": password})
+def auth(client, email="uno@example.invalid", password="testpass-one", otp=None):
+    payload = {"email": email, "password": password}
+    if otp is not None:
+        payload["otp"] = otp
+    response = client.post("/auth/login", json=payload)
     assert response.status_code == 200
     client.headers["X-PAGDOC-CSRF"] = response.json()["csrf_token"]
     return response
@@ -88,15 +84,12 @@ def test_login_rate_limit(client):
 def test_login_sets_protected_cookie_and_me_works(client):
     response = auth(client)
     cookie = response.headers["set-cookie"].lower()
-    assert "httponly" in cookie
-    assert "secure" in cookie
-    assert "samesite=strict" in cookie
-    assert response.json()["csrf_token"]
-    assert "pagdoc_csrf" in response.cookies
+    assert "httponly" in cookie and "secure" in cookie and "samesite=strict" in cookie
+    assert response.json()["csrf_token"] and "pagdoc_csrf" in response.cookies
     me = client.get("/me")
     assert me.status_code == 200
-    assert me.json()["tenant_id"] == 1
-    assert me.json()["role"] == "admin"
+    assert me.json()["tenant_id"] == 1 and me.json()["role"] == "admin"
+    assert me.json()["mfa_enabled"] is False
 
 
 def test_tampered_session_cookie_is_rejected(client):
@@ -140,6 +133,54 @@ def test_logout_all_revokes_parallel_sessions(client):
         other.close()
 
 
+def test_mfa_setup_confirm_and_login(client):
+    auth(client)
+    setup = client.post("/auth/mfa/setup")
+    assert setup.status_code == 200
+    secret = setup.json()["secret"]
+    assert setup.json()["otpauth_uri"].startswith("otpauth://totp/")
+    code = api.pyotp.TOTP(secret).now()
+    confirm = client.post("/auth/mfa/confirm", json={"code": code})
+    assert confirm.status_code == 200 and confirm.json()["enabled"] is True
+    other = TestClient(api.app, base_url="https://testserver")
+    try:
+        missing = other.post("/auth/login", json={"email": "uno@example.invalid", "password": "testpass-one"})
+        assert missing.status_code == 401 and missing.json()["detail"] == "MFA required"
+        good = other.post("/auth/login", json={"email": "uno@example.invalid", "password": "testpass-one", "otp": api.pyotp.TOTP(secret).now()})
+        assert good.status_code == 200
+    finally:
+        other.close()
+
+
+def test_admin_password_reset_revokes_sessions(client):
+    viewer = TestClient(api.app, base_url="https://testserver")
+    try:
+        auth(viewer, "viewer@example.invalid", "testpass-viewer")
+        auth(client)
+        reset = client.post("/users/3/reset-password", json={"password": "new-long-viewer-password"})
+        assert reset.status_code == 200 and reset.json()["sessions_revoked"] is True
+        assert viewer.get("/me").status_code == 401
+        assert viewer.post("/auth/login", json={"email": "viewer@example.invalid", "password": "testpass-viewer"}).status_code == 401
+        assert viewer.post("/auth/login", json={"email": "viewer@example.invalid", "password": "new-long-viewer-password"}).status_code == 200
+    finally:
+        viewer.close()
+
+
+def test_admin_can_reset_user_mfa_and_sessions(client):
+    viewer = TestClient(api.app, base_url="https://testserver")
+    try:
+        auth(viewer, "viewer@example.invalid", "testpass-viewer")
+        setup = viewer.post("/auth/mfa/setup")
+        secret = setup.json()["secret"]
+        assert viewer.post("/auth/mfa/confirm", json={"code": api.pyotp.TOTP(secret).now()}).status_code == 200
+        auth(client)
+        reset = client.post("/users/3/reset-mfa")
+        assert reset.status_code == 200 and reset.json()["mfa_enabled"] is False
+        assert viewer.get("/me").status_code == 401
+    finally:
+        viewer.close()
+
+
 def test_tenant_one_reads_only_own_entities(client):
     auth(client)
     assert [p["id"] for p in client.get("/projects").json()] == [10]
@@ -147,8 +188,7 @@ def test_tenant_one_reads_only_own_entities(client):
     assert [v["id"] for v in client.get("/vehicles").json()] == [12]
     assert [d["id"] for d in client.get("/documents").json()] == [100]
     dash = client.get("/dashboard").json()
-    assert dash["documents"]["total"] == 1
-    assert dash["documents"]["valid"] == 1
+    assert dash["documents"]["total"] == 1 and dash["documents"]["valid"] == 1
     assert dash["entities"] == {"projects": 1, "workers": 1, "vehicles": 1}
 
 
@@ -172,8 +212,7 @@ def test_viewer_can_read_but_cannot_write(client):
 
 def test_viewer_cannot_read_admin_resources(client):
     auth(client, "viewer@example.invalid", "testpass-viewer")
-    assert client.get("/users").status_code == 403
-    assert client.get("/audit").status_code == 403
+    assert client.get("/users").status_code == 403 and client.get("/audit").status_code == 403
 
 
 def test_editor_can_create_core_entities(client):
@@ -181,8 +220,7 @@ def test_editor_can_create_core_entities(client):
     p = client.post("/projects", json={"name": "Proyecto nuevo", "code": "PN-01"})
     w = client.post("/workers", json={"full_name": "Persona Ficticia", "identifier": "DEMO", "job_title": "Técnico"})
     v = client.post("/vehicles", json={"label": "Camioneta ficticia", "plate": "demo99", "vehicle_type": "Camioneta"})
-    assert p.status_code == w.status_code == v.status_code == 201
-    assert v.json()["plate"] == "DEMO99"
+    assert p.status_code == w.status_code == v.status_code == 201 and v.json()["plate"] == "DEMO99"
 
 
 def test_document_creation_is_tenant_scoped_and_audited(client):
@@ -199,26 +237,22 @@ def test_document_creation_is_tenant_scoped_and_audited(client):
 
 def test_company_document_can_have_no_project(client):
     auth(client)
-    response = client.post("/documents", json={"title": "Documento empresa", "subject_type": "company", "subject_name": "Ficticia Uno"})
-    assert response.status_code == 201
+    assert client.post("/documents", json={"title": "Documento empresa", "subject_type": "company", "subject_name": "Ficticia Uno"}).status_code == 201
 
 
 def test_cannot_add_document_to_other_tenant_project(client):
     auth(client)
-    response = client.post("/documents", json={"project_id": 20, "title": "Intento", "subject_type": "project", "subject_name": "Ejemplo"})
-    assert response.status_code == 404
+    assert client.post("/documents", json={"project_id": 20, "title": "Intento", "subject_type": "project", "subject_name": "Ejemplo"}).status_code == 404
 
 
 def test_invalid_document_type_rejected(client):
     auth(client)
-    response = client.post("/documents", json={"project_id": 10, "title": "Prueba", "subject_type": "unknown", "subject_name": "Demo"})
-    assert response.status_code == 422
+    assert client.post("/documents", json={"project_id": 10, "title": "Prueba", "subject_type": "unknown", "subject_name": "Demo"}).status_code == 422
 
 
 def test_document_requires_positive_project_identifier(client):
     auth(client)
-    response = client.post("/documents", json={"project_id": -1, "title": "Registro", "subject_type": "project", "subject_name": "Ejemplo"})
-    assert response.status_code == 422
+    assert client.post("/documents", json={"project_id": -1, "title": "Registro", "subject_type": "project", "subject_name": "Ejemplo"}).status_code == 422
 
 
 @pytest.mark.parametrize("path", ["/projects/20/active", "/workers/21/active", "/vehicles/22/active", "/users/2/active"])
@@ -255,8 +289,7 @@ def test_admin_can_create_user_and_it_is_tenant_scoped(client):
 
 def test_duplicate_email_rejected(client):
     auth(client)
-    response = client.post("/users", json={"email": "dos@example.invalid", "password": "long-demo-password", "role": "viewer"})
-    assert response.status_code == 409
+    assert client.post("/users", json={"email": "dos@example.invalid", "password": "long-demo-password", "role": "viewer"}).status_code == 409
 
 
 def test_audit_is_tenant_isolated(client):
@@ -266,8 +299,7 @@ def test_audit_is_tenant_isolated(client):
     assert "project.create" in one_actions and "auth.login" in one_actions
     auth(client, "dos@example.invalid", "testpass-two")
     two_actions = [a["action"] for a in client.get("/audit").json()]
-    assert "project.create" not in two_actions
-    assert "auth.login" in two_actions
+    assert "project.create" not in two_actions and "auth.login" in two_actions
 
 
 def test_deactivation_removes_entity_from_dashboard_count(client):

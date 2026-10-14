@@ -1,0 +1,14 @@
+# PAGDOC tested direct dependency pins.
+# Generated from the green Python 3.12 CI environment on 2026-10-14.
+# Keep requirements.txt as the compatible development range; CI uses this file.
+fastapi==0.143.0
+uvicorn==0.54.0
+sqlalchemy==2.1.4
+alembic==1.20.0
+psycopg[binary]==3.3.6
+pydantic==2.14.1
+pwdlib[argon2]==0.3.1
+cryptography==46.0.7
+pyotp==2.10.0
+httpx==0.28.1
+pytest==9.1.1

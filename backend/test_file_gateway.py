@@ -33,9 +33,11 @@ def test_clean_file_is_stored_only_after_scan(tmp_path):
     store = make_store(tmp_path)
     gateway = SecureDocumentGateway(store, CleanScanner())
     payload = b"%PDF-1.7\n% fictitious clean file\n%%EOF"
-    obj = gateway.ingest(1, "demo.pdf", "application/pdf", payload)
-    assert store.exists(1, obj.object_key)
-    assert store.get(1, obj.object_key) == payload
+    result = gateway.ingest(1, "demo.pdf", "application/pdf", payload)
+    assert result.scan.clean is True
+    assert result.scan.engine == "fake-ci-scanner"
+    assert store.exists(1, result.stored.object_key)
+    assert store.get(1, result.stored.object_key) == payload
 
 
 def test_blocked_file_is_never_written(tmp_path):

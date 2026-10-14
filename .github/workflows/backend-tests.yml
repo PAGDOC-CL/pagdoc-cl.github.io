@@ -65,4 +65,4 @@ jobs:
           docker exec "$PG_CONTAINER" pg_restore -U pagdoc_ci -d pagdoc_ci /tmp/pagdoc_ci.dump
           test "$(docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -tAc "SELECT count(*) FROM tenants WHERE name='CI Backup Tenant';")" = "1"
       - name: Run security, isolation, module, storage and requirements tests
-        run: python -m pytest -q test_app.py test_storage.py test_requirements_engine.py
+        run: python -m pytest -q test_app.py test_storage.py test_requirements_engine.py test_requirements_api.py

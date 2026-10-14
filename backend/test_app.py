@@ -99,10 +99,13 @@ def client(tmp_path, monkeypatch):
 
 
 def auth(client, user_id, tenant_id):
+    csrf = "test-csrf-token"
     client.cookies.set(
         "pagdoc_session",
         api.signer.dumps({"uid": user_id, "tid": tenant_id}),
     )
+    client.cookies.set("pagdoc_csrf", csrf)
+    client.headers["X-PAGDOC-CSRF"] = csrf
 
 
 def test_health_and_security_headers(client):
@@ -147,6 +150,8 @@ def test_login_sets_protected_cookie_and_me_works(client):
     assert "httponly" in cookie
     assert "secure" in cookie
     assert "samesite=strict" in cookie
+    assert response.json()["csrf_token"]
+    assert "pagdoc_csrf" in response.cookies
     me = client.get("/me")
     assert me.status_code == 200
     assert me.json()["tenant_id"] == 1
@@ -184,6 +189,15 @@ def test_tenant_two_reads_only_own_entities(client):
 def test_reject_forged_tenant_cookie(client):
     auth(client, 1, 2)
     assert client.get("/projects").status_code == 401
+
+
+def test_write_requires_csrf(client):
+    client.cookies.set(
+        "pagdoc_session",
+        api.signer.dumps({"uid": 1, "tid": 1}),
+    )
+    response = client.post("/projects", json={"name": "Sin CSRF"})
+    assert response.status_code == 403
 
 
 def test_viewer_can_read_but_cannot_write(client):

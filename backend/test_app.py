@@ -102,7 +102,6 @@ def auth(client, user_id, tenant_id):
     client.cookies.set(
         "pagdoc_session",
         api.signer.dumps({"uid": user_id, "tid": tenant_id}),
-        secure=True,
     )
 
 

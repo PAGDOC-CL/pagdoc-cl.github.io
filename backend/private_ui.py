@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parent.parent
 @core.app.get('/app',include_in_schema=False,response_class=HTMLResponse)
 def private_app():
     source=(ROOT/'operacion.html').read_text(encoding='utf-8')
-    return HTMLResponse(source.replace('data-runtime="demo"','data-runtime="private"').replace('href="assets/operations.css"','href="/app/assets/operations.css"').replace('src="assets/operations.js"','src="/app/assets/operations.js"'))
+    return HTMLResponse(source.replace('data-runtime="demo"','data-runtime="private"').replace('href="index.html"','href="/app"').replace('href="assets/operations.css"','href="/app/assets/operations.css"').replace('src="assets/operations.js"','src="/app/assets/operations.js"'))
 
 @core.app.get('/app/assets/{asset}',include_in_schema=False)
 def app_asset(asset:str):

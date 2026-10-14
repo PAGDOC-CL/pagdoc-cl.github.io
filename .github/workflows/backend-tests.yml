@@ -7,6 +7,7 @@ on:
       - "assets/**"
       - "tests/**"
       - "package*.json"
+      - "deployment/**"
       - ".github/workflows/backend-tests.yml"
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - "assets/**"
       - "tests/**"
       - "package*.json"
+      - "deployment/**"
       - ".github/workflows/backend-tests.yml"
 permissions:
   contents: read
@@ -79,6 +81,8 @@ jobs:
         run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_retention_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py test_operations_api.py test_private_operations_ui.py test_sharepoint_adapter.py
       - name: Run private server smoke test
         run: python -m pytest -q test_private_server_smoke.py
+      - name: Test local secret generation
+        run: python -m pytest -q test_local_deployment.py
       - name: Run PostgreSQL concurrency tests
         env:
           PAGDOC_DATABASE_URL: postgresql+psycopg://pagdoc_ci:pagdoc_ci_password@localhost:5432/pagdoc_ci
@@ -95,3 +99,37 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node --check assets/operations.js
       - run: npm test
+
+  private-containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Parse Windows launcher
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/deployment/windows/PAGDOC.ps1", [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { $parseErrors | Write-Error; exit 1 }
+      - name: Generate private CI configuration
+        run: python3 deployment/local/generate_config.py "$RUNNER_TEMP/pagdoc-private/runtime.env"
+      - name: Validate local composition and start containers
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml config --quiet
+          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml up --build --detach --wait --wait-timeout 240
+      - name: Provision fictional administrator and verify HTTPS
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml exec -T api python - <<'PY'
+          import server
+          import app as core
+          from provision_beta import provision
+          with core.SessionLocal() as db:
+              provision(db,'Fictitious private CI tenant','private-pilot@example.invalid','ci-only-private-pilot-password')
+              db.commit()
+          PY
+          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$RUNNER_TEMP/pagdoc-private/root.crt"
+          python3 deployment/local/smoke.py "$RUNNER_TEMP/pagdoc-private/root.crt"
+      - name: Stop temporary CI services
+        if: always()
+        run: docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml down

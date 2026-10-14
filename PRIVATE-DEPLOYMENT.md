@@ -8,6 +8,8 @@ El navegador público nunca recibe credenciales de Microsoft, claves de cifrado 
 
 ## Preparación de infraestructura (sin contratación automática)
 
+Para el piloto en un equipo Windows propio, sigue [WINDOWS-PRIVATE-SERVER.md](WINDOWS-PRIVATE-SERVER.md). Su composición local limita el puerto HTTPS al bucle local y genera secretos fuera de Git. La composición general de este documento está destinada a un host privado con dominio controlado.
+
 1. Disponer de un equipo/servidor privado autorizado y un nombre HTTPS controlado por el propietario. Evaluar costo, respaldo y disponibilidad antes de usarlo.
 2. Revisar `deployment/compose.yml`, `deployment/Dockerfile` y `deployment/Caddyfile`. Son plantillas: no se han ejecutado en un host productivo.
 3. Configurar secretos fuera de Git: `PAGDOC_POSTGRES_PASSWORD`, `PAGDOC_DATABASE_URL`, `PAGDOC_SECRET_KEY`, `PAGDOC_ENCRYPTION_KEY`, `PAGDOC_PUBLIC_ORIGIN` y `PAGDOC_HOST`. La URL de base debe apuntar al servicio `database`, usar PostgreSQL y coincidir con usuario/contraseña configurados. La clave de aplicación debe ser aleatoria; no reutilizar valores de pruebas.

@@ -1,0 +1,8 @@
+{
+    auto_https disable_redirects
+    admin off
+}
+https://localhost:8443 {
+    tls internal
+    reverse_proxy api:8000
+}

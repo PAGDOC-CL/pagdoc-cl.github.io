@@ -6,14 +6,16 @@ PAGDOC es un proyecto de control documental para empresas contratistas: vigencia
 
 - Sitio comercial: publicado en GitHub Pages.
 - Demo pública: panel multi-módulo con datos 100 % ficticios.
-- Backend privado: prototipo técnico en desarrollo, **no desplegado para producción**.
+- Backend: código de prototipo técnico en desarrollo, **no desplegado para producción**.
 - Datos reales: **no autorizados** en este repositorio ni en la demo.
 - Presupuesto inicial autorizado: **$0 CLP**; no se contratan servicios desde este proyecto sin aprobación expresa.
 
 ## Accesos públicos
 
-- Sitio: https://paulo02-creator.github.io/pagdoc/
-- Demo: https://paulo02-creator.github.io/pagdoc/demo.html
+- Sitio: https://pagdoc-cl.github.io/
+- Vista de usuario: https://pagdoc-cl.github.io/usuario.html
+- Demo: https://pagdoc-cl.github.io/demo.html
+- Planificador: https://pagdoc-cl.github.io/demo.html#planificador
 
 ## Capacidades desarrolladas
 
@@ -24,6 +26,8 @@ PAGDOC es un proyecto de control documental para empresas contratistas: vigencia
 - Búsqueda y filtros.
 - Auditoría ficticia.
 - Exportación CSV.
+- Planificador de personal con calendario mensual, descanso, terreno y asignación de servicio por período.
+- La planificación ficticia se conserva únicamente en el navegador; no se sincroniza entre usuarios.
 
 ### Backend de prototipo
 - FastAPI + SQLAlchemy.

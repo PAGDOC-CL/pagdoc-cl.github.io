@@ -31,6 +31,12 @@ Actualización: 14 de octubre de 2026.
 ## Evidencia automática actual
 La última ejecución verificada del backend finalizó en verde. La suite principal aprobó **121 pruebas**, el smoke test privado ficticio aprobó **1 prueba** y las pruebas de concurrencia PostgreSQL aprobaron **2 pruebas**, para un total de **124 pruebas aprobadas**. Las migraciones `0001` a `0008` se aplicaron correctamente sobre SQLite y PostgreSQL, y la restauración PostgreSQL fue validada dentro del mismo workflow.
 
+## Planificador de personal
+- Calendario mensual del equipo o por colaborador con datos ficticios.
+- Asignación por día/período de terreno, descanso y servicio; eliminación de asignación mediante estado sin asignar.
+- Guardado local en navegador y exportación CSV del mes seleccionado.
+- Pendiente de producción: modelo de planificación en servidor, permisos, auditoría y sincronización multiusuario.
+
 ## Siguiente bloque técnico antes de producción
 1. Integrar un scanner antimalware real y almacenamiento privado de objetos, manteniendo el gateway fail-closed.
 2. Diseñar y probar endpoints binarios privados de carga/descarga solo después de completar el punto anterior.

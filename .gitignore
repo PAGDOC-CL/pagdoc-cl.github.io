@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+node_modules/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.dump.enc
+*.dump.enc.sha256

@@ -155,3 +155,36 @@ def test_postgres_serializes_tenant_audit_chain():
         assert seals[0].previous_hash is None
         for previous, current in zip(seals[:-1], seals[1:], strict=True):
             assert current.previous_hash == previous.event_hash
+
+def test_postgres_prevents_double_personnel_assignment():
+    import server
+    import operations_api as ops
+    from datetime import date,timedelta
+    from fastapi import HTTPException
+    identity=990100
+    with core.SessionLocal() as db:
+        db.add(core.Tenant(id=identity,name='Fictitious assignment race tenant'));db.flush()
+        db.add(core.User(id=identity,tenant_id=identity,email='assignment-race@example.invalid',password_hash=core.hasher.hash('test-only-password'),role='admin'))
+        db.add(core.Project(id=identity,tenant_id=identity,name='Fictitious race project'))
+        db.add(core.Worker(id=identity,tenant_id=identity,full_name='Fictitious race worker'));db.flush()
+        for sid in [identity,identity+1]:db.add(ops.Service(id=sid,tenant_id=identity,project_id=identity,code=f'RACE-{sid}',name='Fictitious service',client='Fictitious client',location='Fictitious site',supervisor='Fictitious supervisor',starts_on=date.today(),ends_on=date.today()+timedelta(days=1)))
+        db.commit()
+    barrier=threading.Barrier(2);results=[];lock=threading.Lock()
+    def assign(sid):
+        try:
+            with core.SessionLocal() as db:
+                user=db.get(core.User,identity);payload=ops.AssignmentIn(worker_id=identity,service_id=sid,starts_on=date.today(),ends_on=date.today(),state='terrain',reason='Fictitious race test')
+                barrier.wait(timeout=10);ops.save_assignment(payload,user,None,db);status=200
+        except HTTPException as exc:status=exc.status_code
+        except Exception as exc:status=type(exc).__name__
+        with lock:results.append(status)
+    try:
+        threads=[threading.Thread(target=assign,args=(sid,)) for sid in [identity,identity+1]]
+        for thread in threads:thread.start()
+        for thread in threads:thread.join(timeout=30)
+        assert sorted(results)==[200,409]
+        with core.SessionLocal() as db:assert len(db.scalars(select(ops.Assignment).where(ops.Assignment.tenant_id==identity)).all())==1
+    finally:
+        with core.SessionLocal() as db:
+            for model in [ops.AssignmentChange,ops.Assignment,ops.Service,integrity.AuditSeal,core.Audit,core.Worker,core.Project,core.User]:db.execute(delete(model).where(model.tenant_id==identity))
+            db.execute(delete(core.Tenant).where(core.Tenant.id==identity));db.commit()

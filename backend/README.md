@@ -70,7 +70,7 @@ El esquema está versionado hasta:
 La CI ejecuta `alembic upgrade head` desde una base limpia tanto en SQLite como en PostgreSQL 17.
 
 ## Estado de pruebas verificado
-El workflow `.github/workflows/backend-tests.yml` usa Python 3.12 y PostgreSQL 17. La última ejecución verificada completó correctamente:
+El workflow `.github/workflows/backend-tests.yml` usa Python 3.12 y PostgreSQL 17. La validación base anterior a la beta operativa completó correctamente:
 
 - **121 pruebas** en la suite principal del backend;
 - **1 prueba** end-to-end del servidor privado ensamblado con datos ficticios;

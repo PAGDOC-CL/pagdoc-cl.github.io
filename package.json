@@ -1,0 +1,7 @@
+{
+  "name": "pagdoc-frontend-checks",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"test": "node tests/operations-ui.cjs"},
+  "devDependencies": {"jsdom": "30.1.2"}
+}

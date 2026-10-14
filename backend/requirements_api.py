@@ -130,7 +130,7 @@ def link_document_policy(document_id: int, data: PolicyLinkIn, user: core.Editor
         select(core.Document).where(
             core.Document.id == document_id,
             core.Document.tenant_id == user.tenant_id,
-        )
+        ).with_for_update()
     )
     if doc is None:
         raise HTTPException(404, "Document not found")

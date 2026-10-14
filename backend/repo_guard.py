@@ -19,7 +19,7 @@ CONTENT_PATTERNS = {
     "GitHub token": re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b"),
     "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 }
-SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache"}
+SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", "node_modules"}
 
 
 def scan(root: Path) -> list[str]:

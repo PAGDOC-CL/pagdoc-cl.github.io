@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0008_retention_policy"
+EXPECTED_SCHEMA_REVISION = "0009_operations"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

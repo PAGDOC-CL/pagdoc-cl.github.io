@@ -132,7 +132,19 @@ class Audit(Base):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(engine)
+    if os.getenv("PAGDOC_ENVIRONMENT", "development") in {"staging", "production"}:
+        from sqlalchemy import text
+        from ops_api import EXPECTED_SCHEMA_REVISION
+        from sqlalchemy.exc import SQLAlchemyError
+        try:
+            with engine.connect() as connection:
+                revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                if revision != EXPECTED_SCHEMA_REVISION:
+                    raise RuntimeError("Apply reviewed migrations before starting the private server")
+        except SQLAlchemyError as exc:
+            raise RuntimeError("Apply reviewed migrations before starting the private server") from exc
+    else:
+        Base.metadata.create_all(engine)
     yield
 
 
@@ -202,6 +214,9 @@ def current_user(request: Request, db: Db) -> User:
     user = db.get(User, session.user_id)
     if not user or not user.active or user.tenant_id != session.tenant_id:
         raise HTTPException(401, "Invalid or expired session")
+    from access_policy import planner_path_allowed
+    if user.role == "planner" and not planner_path_allowed(request.url.path):
+        raise HTTPException(403, "This account is limited to personnel planning")
     request.state.pagdoc_session_id = session.id
     return user
 
@@ -302,7 +317,7 @@ class DocumentIn(BaseModel):
 class UserIn(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=12, max_length=1024)
-    role: str = Field(pattern="^(admin|editor|viewer)$")
+    role: str = Field(pattern="^(admin|editor|viewer|planner|reviewer)$")
 
 
 @app.get("/health")
@@ -397,7 +412,7 @@ def mfa_confirm(data: MfaCodeIn, user: Auth, _: Csrf, db: Db):
 
 @app.get("/me")
 def me(user: Auth):
-    return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "role": user.role, "mfa_enabled": bool(user.mfa_enabled)}
+    return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "role": user.role, "mfa_enabled": bool(user.mfa_enabled), "capabilities": __import__("access_policy").capabilities(user.role)}
 
 
 @app.get("/users")

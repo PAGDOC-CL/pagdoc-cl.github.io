@@ -62,3 +62,16 @@ PAGDOC todavía no debe recibir documentación real. Antes de producción faltan
 ## Regla de desarrollo
 
 Una funcionalidad no se considera terminada solo porque exista código: debe contar con prueba o evidencia técnica correspondiente. No se publicará como “producción” mientras existan controles críticos pendientes.
+
+## Centro operativo y aplicación privada
+
+- Demo operativa: https://pagdoc-cl.github.io/operacion.html
+- Servicios con cliente, proyecto, ubicación, supervisor y período.
+- Calendario por colaborador/equipo, conflictos entre servicios/descansos y asistencia realizada.
+- Bandeja documental con estados, motivos, historial y revisión por rol.
+- Pendientes con responsable, plazo, estado y control de cambios simultáneos.
+- Checklist de cierre con requisitos, evidencia, asistencia y tareas.
+- Gestión de usuarios/roles, revocación de sesiones y configuración MFA en privado.
+- Cliente privado servido en `/app` por FastAPI, con sesión real y permisos en servidor. No se publica la API en GitHub Pages.
+
+La demo guarda solo datos ficticios en el navegador. La API privada está implementada y probada; su alojamiento externo, SharePoint runtime y transferencia de archivos aún no están habilitados. Consultar `PRIVATE-DEPLOYMENT.md` y `SHAREPOINT-INTEGRATION.md` para límites y pasos pendientes. No se han contratado servicios.

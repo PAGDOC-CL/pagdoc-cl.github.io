@@ -29,7 +29,7 @@ Actualización: 14 de octubre de 2026.
 - Guard automático para impedir artefactos privados y patrones comunes de secretos en el repositorio público.
 
 ## Evidencia automática actual
-La última ejecución verificada del backend finalizó en verde. La suite principal aprobó **121 pruebas**, el smoke test privado ficticio aprobó **1 prueba** y las pruebas de concurrencia PostgreSQL aprobaron **2 pruebas**, para un total de **124 pruebas aprobadas**. Las migraciones `0001` a `0008` se aplicaron correctamente sobre SQLite y PostgreSQL, y la restauración PostgreSQL fue validada dentro del mismo workflow.
+La validación base anterior a la beta operativa finalizó en verde. La suite principal aprobó **121 pruebas**, el smoke test privado ficticio aprobó **1 prueba** y las pruebas de concurrencia PostgreSQL aprobaron **2 pruebas**, para un total de **124 pruebas aprobadas**. Las migraciones `0001` a `0008` se aplicaron correctamente sobre SQLite y PostgreSQL, y la restauración PostgreSQL fue validada dentro del mismo workflow.
 
 ## Planificador de personal
 - Calendario mensual del equipo o por colaborador con datos ficticios.
@@ -87,3 +87,9 @@ Cada criterio debe demostrarse con evidencia técnica; escribir código por sí 
 
 ## Estado de seguridad de datos
 No existen datos reales ni credenciales de producción incorporados intencionalmente al prototipo. El desarrollo continúa con información ficticia hasta completar los criterios pendientes.
+
+## Bloque operativo implementado (beta ficticia)
+
+Se agregan servicios, calendario persistente en la API, control de solapamientos/versiones, asistencia, revisión documental, requisitos por proyecto, evidencia por trabajador, tareas y cierre. Los roles planner/reviewer tienen alcances independientes; el planificador no accede a endpoints documentales. La nueva interfaz pública permite recorrer esos flujos con datos ficticios; `/app` sirve el cliente privado contra la API con sesión.
+
+La migración `0009_operations` incorpora las tablas del bloque. El arranque privado exige el esquema esperado. Se incluyen métricas por proceso, exportación de checkpoint de auditoría y plantillas de despliegue/backup/restauración; no se presentan como infraestructura productiva desplegada. El adaptador SharePoint es de metadatos y sigue pendiente de identidad/runtime corporativa. Los pendientes de producción anteriores siguen vigentes.

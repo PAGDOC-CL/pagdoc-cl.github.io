@@ -43,13 +43,14 @@ class DocumentPatch(BaseModel):
     expires_on: date | None = None
 
 
-def _document_for_tenant(db: core.Session, tenant_id: int, document_id: int) -> core.Document:
-    doc = db.scalar(
-        select(core.Document).where(
-            core.Document.id == document_id,
-            core.Document.tenant_id == tenant_id,
-        )
+def _document_for_tenant(db: core.Session, tenant_id: int, document_id: int, lock: bool = False) -> core.Document:
+    query = select(core.Document).where(
+        core.Document.id == document_id,
+        core.Document.tenant_id == tenant_id,
     )
+    if lock:
+        query = query.with_for_update()
+    doc = db.scalar(query)
     if doc is None:
         raise HTTPException(404, "Document not found")
     return doc
@@ -92,7 +93,7 @@ def update_document(document_id: int, data: DocumentPatch, user: core.Editor, db
     if not data.model_fields_set:
         raise HTTPException(422, "At least one field must be supplied")
 
-    doc = _document_for_tenant(db, user.tenant_id, document_id)
+    doc = _document_for_tenant(db, user.tenant_id, document_id, True)
 
     if "project_id" in data.model_fields_set and data.project_id is not None:
         project = db.scalar(

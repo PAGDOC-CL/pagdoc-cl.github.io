@@ -1,0 +1,58 @@
+# Deployment template only. Requires an authorized private host and real secrets
+# outside Git. This file does not provision or purchase any external resource.
+services:
+  database:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: pagdoc
+      POSTGRES_USER: pagdoc
+      POSTGRES_PASSWORD: ${PAGDOC_POSTGRES_PASSWORD:?Set a private database password}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U pagdoc -d pagdoc']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  api:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    environment:
+      PAGDOC_ENVIRONMENT: staging
+      PAGDOC_DATABASE_URL: ${PAGDOC_DATABASE_URL:?Set the private PostgreSQL SQLAlchemy URL}
+      PAGDOC_SECRET_KEY: ${PAGDOC_SECRET_KEY:?Set a private application key}
+      PAGDOC_ENCRYPTION_KEY: ${PAGDOC_ENCRYPTION_KEY:?Set a private Fernet key}
+      PAGDOC_PUBLIC_ORIGIN: ${PAGDOC_PUBLIC_ORIGIN:?Set the private HTTPS origin}
+    command: [sh, -c, 'python -m alembic upgrade head && exec uvicorn server:app --host 0.0.0.0 --port 8000 --no-access-log']
+    depends_on:
+      database:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready',timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+  proxy:
+    image: caddy:2
+    environment:
+      PAGDOC_HOST: ${PAGDOC_HOST:?Set a hostname you control}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  database:
+  caddy_data:
+  caddy_config:

@@ -21,8 +21,10 @@ def test_restrictive_headers_are_present(monkeypatch):
 
 
 def test_hsts_is_enabled_for_production(monkeypatch):
-    monkeypatch.setenv("PAGDOC_ENVIRONMENT", "production")
+    monkeypatch.setenv("PAGDOC_ENVIRONMENT", "test")
     with TestClient(core.app, base_url="https://testserver") as client:
+        # This isolates the response-header policy from the separate startup gate.
+        monkeypatch.setenv("PAGDOC_ENVIRONMENT", "production")
         response = client.get("/health")
     assert response.status_code == 200
     assert response.headers["strict-transport-security"] == "max-age=31536000; includeSubDomains"

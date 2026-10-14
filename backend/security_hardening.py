@@ -9,6 +9,8 @@ from runtime_config import load_runtime_config
 async def hardened_api_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    if request.url.path == "/app" or request.url.path.startswith("/app/assets/"):
+        response.headers["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     if load_runtime_config().environment in {"staging", "production"}:

@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
+import pyotp
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
@@ -19,6 +21,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 DB_URL = os.getenv("PAGDOC_DATABASE_URL", "sqlite:///./pagdoc_dev.sqlite3")
 SECRET = os.getenv("PAGDOC_SECRET_KEY", "")
+ENCRYPTION_KEY = os.getenv("PAGDOC_ENCRYPTION_KEY", "")
 if not SECRET or len(SECRET) < 32:
     raise RuntimeError("Set PAGDOC_SECRET_KEY to a random value of at least 32 characters")
 
@@ -52,6 +55,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="viewer")
     active: Mapped[int] = mapped_column(Integer, default=1)
+    mfa_secret_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    mfa_enabled: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class UserSession(Base):
@@ -61,9 +66,7 @@ class UserSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     csrf_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -73,9 +76,7 @@ class LoginAttempt(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     ip_hash: Mapped[str] = mapped_column(String(64), index=True)
-    occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
-    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class Project(Base):
@@ -126,9 +127,7 @@ class Audit(Base):
     action: Mapped[str] = mapped_column(String(60))
     target_type: Mapped[str] = mapped_column(String(40), default="unknown")
     target_id: Mapped[int] = mapped_column(Integer)
-    at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 @asynccontextmanager
@@ -137,12 +136,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(
-    title="PAGDOC Private API Prototype",
-    docs_url=None,
-    redoc_url=None,
-    lifespan=lifespan,
-)
+app = FastAPI(title="PAGDOC Private API Prototype", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -173,18 +167,32 @@ def _client_hash(request: Request) -> str:
     return _sha256(f"{SECRET}|{host}")
 
 
+def _fernet() -> Fernet:
+    if not ENCRYPTION_KEY:
+        raise HTTPException(503, "MFA encryption key is not configured")
+    try:
+        return Fernet(ENCRYPTION_KEY.encode("utf-8"))
+    except (ValueError, TypeError):
+        raise HTTPException(503, "MFA encryption key is invalid")
+
+
+def _encrypt_mfa(secret: str) -> str:
+    return _fernet().encrypt(secret.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_mfa(value: str) -> str:
+    try:
+        return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        raise HTTPException(503, "MFA secret cannot be decrypted")
+
+
 def _active_session(request: Request, db: Session) -> UserSession | None:
     token = request.cookies.get("pagdoc_session")
     if not token:
         return None
     now = datetime.now(timezone.utc)
-    return db.scalar(
-        select(UserSession).where(
-            UserSession.token_hash == _sha256(token),
-            UserSession.revoked_at.is_(None),
-            UserSession.expires_at > now,
-        )
-    )
+    return db.scalar(select(UserSession).where(UserSession.token_hash == _sha256(token), UserSession.revoked_at.is_(None), UserSession.expires_at > now))
 
 
 def current_user(request: Request, db: Db) -> User:
@@ -205,13 +213,7 @@ def csrf_guard(request: Request, db: Db):
     cookie = request.cookies.get("pagdoc_csrf")
     header = request.headers.get("X-PAGDOC-CSRF")
     session = _active_session(request, db)
-    if (
-        not cookie
-        or not header
-        or session is None
-        or not secrets.compare_digest(cookie, header)
-        or not secrets.compare_digest(session.csrf_hash, _sha256(header))
-    ):
+    if not cookie or not header or session is None or not secrets.compare_digest(cookie, header) or not secrets.compare_digest(session.csrf_hash, _sha256(header)):
         raise HTTPException(403, "CSRF validation failed")
 
 
@@ -244,25 +246,12 @@ AdminWrite = Annotated[User, Depends(admin_write)]
 
 
 def add_audit(db: Session, user: User, action: str, target_type: str, target_id: int):
-    db.add(
-        Audit(
-            tenant_id=user.tenant_id,
-            user_id=user.id,
-            action=action,
-            target_type=target_type,
-            target_id=target_id,
-        )
-    )
+    db.add(Audit(tenant_id=user.tenant_id, user_id=user.id, action=action, target_type=target_type, target_id=target_id))
 
 
 def revoke_user_sessions(db: Session, user_id: int):
     now = datetime.now(timezone.utc)
-    sessions = db.scalars(
-        select(UserSession).where(
-            UserSession.user_id == user_id,
-            UserSession.revoked_at.is_(None),
-        )
-    ).all()
+    sessions = db.scalars(select(UserSession).where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))).all()
     for session in sessions:
         session.revoked_at = now
 
@@ -270,6 +259,15 @@ def revoke_user_sessions(db: Session, user_id: int):
 class Credentials(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=1024)
+    otp: str | None = Field(default=None, min_length=6, max_length=8)
+
+
+class MfaCodeIn(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+
+
+class PasswordResetIn(BaseModel):
+    password: str = Field(min_length=12, max_length=1024)
 
 
 class ProjectIn(BaseModel):
@@ -317,60 +315,36 @@ def login(data: Credentials, response: Response, request: Request, db: Db):
     email = data.email.strip().lower()
     ip_hash = _client_hash(request)
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)
-    failures = db.scalar(
-        select(func.count(LoginAttempt.id)).where(
-            LoginAttempt.email == email,
-            LoginAttempt.ip_hash == ip_hash,
-            LoginAttempt.occurred_at >= cutoff,
-        )
-    ) or 0
+    failures = db.scalar(select(func.count(LoginAttempt.id)).where(LoginAttempt.email == email, LoginAttempt.ip_hash == ip_hash, LoginAttempt.occurred_at >= cutoff)) or 0
     if failures >= LOGIN_MAX_FAILURES:
         raise HTTPException(429, "Too many login attempts. Try again later")
 
     user = db.scalar(select(User).where(User.email == email, User.active == 1))
-    if not user or not hasher.verify(data.password, user.password_hash):
+    valid_password = bool(user and hasher.verify(data.password, user.password_hash))
+    valid_mfa = True
+    if valid_password and user and user.mfa_enabled:
+        if not data.otp:
+            raise HTTPException(401, "MFA required")
+        if not user.mfa_secret_enc:
+            raise HTTPException(503, "MFA configuration is invalid")
+        valid_mfa = pyotp.TOTP(_decrypt_mfa(user.mfa_secret_enc)).verify(data.otp, valid_window=1)
+
+    if not valid_password or not valid_mfa:
         db.add(LoginAttempt(email=email, ip_hash=ip_hash))
         db.commit()
         raise HTTPException(401, "Invalid credentials")
 
-    db.execute(
-        delete(LoginAttempt).where(
-            LoginAttempt.email == email,
-            LoginAttempt.ip_hash == ip_hash,
-        )
-    )
+    db.execute(delete(LoginAttempt).where(LoginAttempt.email == email, LoginAttempt.ip_hash == ip_hash))
     session_token = secrets.token_urlsafe(48)
     csrf_token = secrets.token_urlsafe(32)
-    db_session_row = UserSession(
-        tenant_id=user.tenant_id,
-        user_id=user.id,
-        token_hash=_sha256(session_token),
-        csrf_hash=_sha256(csrf_token),
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=SESSION_SECONDS),
-    )
+    db_session_row = UserSession(tenant_id=user.tenant_id, user_id=user.id, token_hash=_sha256(session_token), csrf_hash=_sha256(csrf_token), expires_at=datetime.now(timezone.utc) + timedelta(seconds=SESSION_SECONDS))
     db.add(db_session_row)
     db.flush()
     add_audit(db, user, "auth.login", "session", db_session_row.id)
     db.commit()
 
-    response.set_cookie(
-        "pagdoc_session",
-        session_token,
-        httponly=True,
-        secure=True,
-        samesite="strict",
-        max_age=SESSION_SECONDS,
-        path="/",
-    )
-    response.set_cookie(
-        "pagdoc_csrf",
-        csrf_token,
-        httponly=False,
-        secure=True,
-        samesite="strict",
-        max_age=SESSION_SECONDS,
-        path="/",
-    )
+    response.set_cookie("pagdoc_session", session_token, httponly=True, secure=True, samesite="strict", max_age=SESSION_SECONDS, path="/")
+    response.set_cookie("pagdoc_csrf", csrf_token, httponly=False, secure=True, samesite="strict", max_age=SESSION_SECONDS, path="/")
     return {"authenticated": True, "role": user.role, "csrf_token": csrf_token}
 
 
@@ -396,24 +370,39 @@ def logout_all(response: Response, user: Auth, _: Csrf, db: Db):
     return {"authenticated": False, "all_sessions_revoked": True}
 
 
+@app.post("/auth/mfa/setup")
+def mfa_setup(user: Auth, _: Csrf, db: Db):
+    if user.mfa_enabled:
+        raise HTTPException(409, "MFA is already enabled")
+    secret = pyotp.random_base32()
+    user.mfa_secret_enc = _encrypt_mfa(secret)
+    add_audit(db, user, "mfa.setup", "user", user.id)
+    db.commit()
+    uri = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name="PAGDOC")
+    return {"secret": secret, "otpauth_uri": uri, "enabled": False}
+
+
+@app.post("/auth/mfa/confirm")
+def mfa_confirm(data: MfaCodeIn, user: Auth, _: Csrf, db: Db):
+    if not user.mfa_secret_enc:
+        raise HTTPException(400, "MFA setup has not been started")
+    secret = _decrypt_mfa(user.mfa_secret_enc)
+    if not pyotp.TOTP(secret).verify(data.code, valid_window=1):
+        raise HTTPException(400, "Invalid MFA code")
+    user.mfa_enabled = 1
+    add_audit(db, user, "mfa.enable", "user", user.id)
+    db.commit()
+    return {"enabled": True}
+
+
 @app.get("/me")
 def me(user: Auth):
-    return {
-        "id": user.id,
-        "tenant_id": user.tenant_id,
-        "email": user.email,
-        "role": user.role,
-    }
+    return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "role": user.role, "mfa_enabled": bool(user.mfa_enabled)}
 
 
 @app.get("/users")
 def users(user: Admin, db: Db):
-    return [
-        {"id": u.id, "email": u.email, "role": u.role, "active": bool(u.active)}
-        for u in db.scalars(
-            select(User).where(User.tenant_id == user.tenant_id).order_by(User.id)
-        ).all()
-    ]
+    return [{"id": u.id, "email": u.email, "role": u.role, "active": bool(u.active), "mfa_enabled": bool(u.mfa_enabled)} for u in db.scalars(select(User).where(User.tenant_id == user.tenant_id).order_by(User.id)).all()]
 
 
 @app.post("/users", status_code=201)
@@ -421,13 +410,7 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
     email = data.email.strip().lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "Email already registered")
-    created = User(
-        tenant_id=user.tenant_id,
-        email=email,
-        password_hash=hasher.hash(data.password),
-        role=data.role,
-        active=1,
-    )
+    created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1)
     db.add(created)
     db.flush()
     add_audit(db, user, "user.create", "user", created.id)
@@ -435,11 +418,34 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
     return {"id": created.id, "email": created.email, "role": created.role}
 
 
+@app.post("/users/{user_id}/reset-password")
+def reset_user_password(user_id: int, data: PasswordResetIn, user: AdminWrite, db: Db):
+    target = db.scalar(select(User).where(User.id == user_id, User.tenant_id == user.tenant_id))
+    if target is None:
+        raise HTTPException(404, "User not found")
+    target.password_hash = hasher.hash(data.password)
+    revoke_user_sessions(db, target.id)
+    add_audit(db, user, "user.password_reset", "user", target.id)
+    db.commit()
+    return {"id": target.id, "password_reset": True, "sessions_revoked": True}
+
+
+@app.post("/users/{user_id}/reset-mfa")
+def reset_user_mfa(user_id: int, user: AdminWrite, db: Db):
+    target = db.scalar(select(User).where(User.id == user_id, User.tenant_id == user.tenant_id))
+    if target is None:
+        raise HTTPException(404, "User not found")
+    target.mfa_secret_enc = None
+    target.mfa_enabled = 0
+    revoke_user_sessions(db, target.id)
+    add_audit(db, user, "user.mfa_reset", "user", target.id)
+    db.commit()
+    return {"id": target.id, "mfa_enabled": False, "sessions_revoked": True}
+
+
 @app.patch("/users/{user_id}/active")
 def set_user_active(user_id: int, data: ActiveIn, user: AdminWrite, db: Db):
-    target = db.scalar(
-        select(User).where(User.id == user_id, User.tenant_id == user.tenant_id)
-    )
+    target = db.scalar(select(User).where(User.id == user_id, User.tenant_id == user.tenant_id))
     if target is None:
         raise HTTPException(404, "User not found")
     if target.id == user.id and not data.active:
@@ -454,210 +460,90 @@ def set_user_active(user_id: int, data: ActiveIn, user: AdminWrite, db: Db):
 
 @app.get("/projects")
 def projects(user: Auth, db: Db):
-    return [
-        {"id": p.id, "name": p.name, "code": p.code, "active": bool(p.active)}
-        for p in db.scalars(
-            select(Project).where(Project.tenant_id == user.tenant_id).order_by(Project.id)
-        ).all()
-    ]
+    return [{"id": p.id, "name": p.name, "code": p.code, "active": bool(p.active)} for p in db.scalars(select(Project).where(Project.tenant_id == user.tenant_id).order_by(Project.id)).all()]
 
 
 @app.post("/projects", status_code=201)
 def add_project(data: ProjectIn, user: Editor, db: Db):
     p = Project(tenant_id=user.tenant_id, name=data.name.strip(), code=data.code, active=1)
-    db.add(p)
-    db.flush()
-    add_audit(db, user, "project.create", "project", p.id)
-    db.commit()
+    db.add(p); db.flush(); add_audit(db, user, "project.create", "project", p.id); db.commit()
     return {"id": p.id, "name": p.name, "code": p.code, "active": True}
 
 
 @app.patch("/projects/{project_id}/active")
 def set_project_active(project_id: int, data: ActiveIn, user: Editor, db: Db):
-    p = db.scalar(
-        select(Project).where(Project.id == project_id, Project.tenant_id == user.tenant_id)
-    )
-    if p is None:
-        raise HTTPException(404, "Project not found")
-    p.active = 1 if data.active else 0
-    add_audit(db, user, "project.activate" if data.active else "project.deactivate", "project", p.id)
-    db.commit()
+    p = db.scalar(select(Project).where(Project.id == project_id, Project.tenant_id == user.tenant_id))
+    if p is None: raise HTTPException(404, "Project not found")
+    p.active = 1 if data.active else 0; add_audit(db, user, "project.activate" if data.active else "project.deactivate", "project", p.id); db.commit()
     return {"id": p.id, "active": bool(p.active)}
 
 
 @app.get("/workers")
 def workers(user: Auth, db: Db):
-    return [
-        {
-            "id": w.id,
-            "full_name": w.full_name,
-            "identifier": w.identifier,
-            "job_title": w.job_title,
-            "active": bool(w.active),
-        }
-        for w in db.scalars(
-            select(Worker).where(Worker.tenant_id == user.tenant_id).order_by(Worker.id)
-        ).all()
-    ]
+    return [{"id": w.id, "full_name": w.full_name, "identifier": w.identifier, "job_title": w.job_title, "active": bool(w.active)} for w in db.scalars(select(Worker).where(Worker.tenant_id == user.tenant_id).order_by(Worker.id)).all()]
 
 
 @app.post("/workers", status_code=201)
 def add_worker(data: WorkerIn, user: Editor, db: Db):
-    w = Worker(
-        tenant_id=user.tenant_id,
-        full_name=data.full_name.strip(),
-        identifier=data.identifier,
-        job_title=data.job_title,
-        active=1,
-    )
-    db.add(w)
-    db.flush()
-    add_audit(db, user, "worker.create", "worker", w.id)
-    db.commit()
+    w = Worker(tenant_id=user.tenant_id, full_name=data.full_name.strip(), identifier=data.identifier, job_title=data.job_title, active=1)
+    db.add(w); db.flush(); add_audit(db, user, "worker.create", "worker", w.id); db.commit()
     return {"id": w.id, "full_name": w.full_name, "active": True}
 
 
 @app.patch("/workers/{worker_id}/active")
 def set_worker_active(worker_id: int, data: ActiveIn, user: Editor, db: Db):
-    w = db.scalar(
-        select(Worker).where(Worker.id == worker_id, Worker.tenant_id == user.tenant_id)
-    )
-    if w is None:
-        raise HTTPException(404, "Worker not found")
-    w.active = 1 if data.active else 0
-    add_audit(db, user, "worker.activate" if data.active else "worker.deactivate", "worker", w.id)
-    db.commit()
+    w = db.scalar(select(Worker).where(Worker.id == worker_id, Worker.tenant_id == user.tenant_id))
+    if w is None: raise HTTPException(404, "Worker not found")
+    w.active = 1 if data.active else 0; add_audit(db, user, "worker.activate" if data.active else "worker.deactivate", "worker", w.id); db.commit()
     return {"id": w.id, "active": bool(w.active)}
 
 
 @app.get("/vehicles")
 def vehicles(user: Auth, db: Db):
-    return [
-        {
-            "id": v.id,
-            "label": v.label,
-            "plate": v.plate,
-            "vehicle_type": v.vehicle_type,
-            "active": bool(v.active),
-        }
-        for v in db.scalars(
-            select(Vehicle).where(Vehicle.tenant_id == user.tenant_id).order_by(Vehicle.id)
-        ).all()
-    ]
+    return [{"id": v.id, "label": v.label, "plate": v.plate, "vehicle_type": v.vehicle_type, "active": bool(v.active)} for v in db.scalars(select(Vehicle).where(Vehicle.tenant_id == user.tenant_id).order_by(Vehicle.id)).all()]
 
 
 @app.post("/vehicles", status_code=201)
 def add_vehicle(data: VehicleIn, user: Editor, db: Db):
-    v = Vehicle(
-        tenant_id=user.tenant_id,
-        label=data.label.strip(),
-        plate=data.plate.strip().upper() if data.plate else None,
-        vehicle_type=data.vehicle_type,
-        active=1,
-    )
-    db.add(v)
-    db.flush()
-    add_audit(db, user, "vehicle.create", "vehicle", v.id)
-    db.commit()
+    v = Vehicle(tenant_id=user.tenant_id, label=data.label.strip(), plate=data.plate.strip().upper() if data.plate else None, vehicle_type=data.vehicle_type, active=1)
+    db.add(v); db.flush(); add_audit(db, user, "vehicle.create", "vehicle", v.id); db.commit()
     return {"id": v.id, "label": v.label, "plate": v.plate, "active": True}
 
 
 @app.patch("/vehicles/{vehicle_id}/active")
 def set_vehicle_active(vehicle_id: int, data: ActiveIn, user: Editor, db: Db):
-    v = db.scalar(
-        select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.tenant_id == user.tenant_id)
-    )
-    if v is None:
-        raise HTTPException(404, "Vehicle not found")
-    v.active = 1 if data.active else 0
-    add_audit(db, user, "vehicle.activate" if data.active else "vehicle.deactivate", "vehicle", v.id)
-    db.commit()
+    v = db.scalar(select(Vehicle).where(Vehicle.id == vehicle_id, Vehicle.tenant_id == user.tenant_id))
+    if v is None: raise HTTPException(404, "Vehicle not found")
+    v.active = 1 if data.active else 0; add_audit(db, user, "vehicle.activate" if data.active else "vehicle.deactivate", "vehicle", v.id); db.commit()
     return {"id": v.id, "active": bool(v.active)}
 
 
 def doc_state(d: Document):
-    if d.expires_on is None:
-        return "no_date"
+    if d.expires_on is None: return "no_date"
     remaining = (d.expires_on - date.today()).days
     return "expired" if remaining < 0 else "expiring" if remaining <= 30 else "valid"
 
 
 @app.get("/documents")
 def documents(user: Auth, db: Db):
-    return [
-        {
-            "id": d.id,
-            "project_id": d.project_id,
-            "title": d.title,
-            "subject_type": d.subject_type,
-            "subject_name": d.subject_name,
-            "expires_on": d.expires_on,
-            "status": doc_state(d),
-        }
-        for d in db.scalars(
-            select(Document).where(Document.tenant_id == user.tenant_id).order_by(Document.id)
-        ).all()
-    ]
+    return [{"id": d.id, "project_id": d.project_id, "title": d.title, "subject_type": d.subject_type, "subject_name": d.subject_name, "expires_on": d.expires_on, "status": doc_state(d)} for d in db.scalars(select(Document).where(Document.tenant_id == user.tenant_id).order_by(Document.id)).all()]
 
 
 @app.post("/documents", status_code=201)
 def add_document(data: DocumentIn, user: Editor, db: Db):
     if data.project_id is not None:
-        project = db.scalar(
-            select(Project).where(
-                Project.id == data.project_id,
-                Project.tenant_id == user.tenant_id,
-            )
-        )
-        if project is None:
-            raise HTTPException(404, "Project not found")
-    d = Document(tenant_id=user.tenant_id, **data.model_dump())
-    db.add(d)
-    db.flush()
-    add_audit(db, user, "document.create", "document", d.id)
-    db.commit()
+        project = db.scalar(select(Project).where(Project.id == data.project_id, Project.tenant_id == user.tenant_id))
+        if project is None: raise HTTPException(404, "Project not found")
+    d = Document(tenant_id=user.tenant_id, **data.model_dump()); db.add(d); db.flush(); add_audit(db, user, "document.create", "document", d.id); db.commit()
     return {"id": d.id, "status": doc_state(d)}
 
 
 @app.get("/dashboard")
 def dashboard(user: Auth, db: Db):
     docs = db.scalars(select(Document).where(Document.tenant_id == user.tenant_id)).all()
-    return {
-        "documents": {
-            "total": len(docs),
-            **{
-                status: sum(doc_state(d) == status for d in docs)
-                for status in ("valid", "expiring", "expired", "no_date")
-            },
-        },
-        "entities": {
-            "projects": len(
-                db.scalars(select(Project).where(Project.tenant_id == user.tenant_id, Project.active == 1)).all()
-            ),
-            "workers": len(
-                db.scalars(select(Worker).where(Worker.tenant_id == user.tenant_id, Worker.active == 1)).all()
-            ),
-            "vehicles": len(
-                db.scalars(select(Vehicle).where(Vehicle.tenant_id == user.tenant_id, Vehicle.active == 1)).all()
-            ),
-        },
-    }
+    return {"documents": {"total": len(docs), **{status: sum(doc_state(d) == status for d in docs) for status in ("valid", "expiring", "expired", "no_date")}}, "entities": {"projects": len(db.scalars(select(Project).where(Project.tenant_id == user.tenant_id, Project.active == 1)).all()), "workers": len(db.scalars(select(Worker).where(Worker.tenant_id == user.tenant_id, Worker.active == 1)).all()), "vehicles": len(db.scalars(select(Vehicle).where(Vehicle.tenant_id == user.tenant_id, Vehicle.active == 1)).all())}}
 
 
 @app.get("/audit")
 def audit(user: Admin, db: Db):
-    return [
-        {
-            "action": a.action,
-            "target_type": a.target_type,
-            "target_id": a.target_id,
-            "user_id": a.user_id,
-            "at": a.at,
-        }
-        for a in db.scalars(
-            select(Audit)
-            .where(Audit.tenant_id == user.tenant_id)
-            .order_by(Audit.id.desc())
-            .limit(100)
-        ).all()
-    ]
+    return [{"action": a.action, "target_type": a.target_type, "target_id": a.target_id, "user_id": a.user_id, "at": a.at} for a in db.scalars(select(Audit).where(Audit.tenant_id == user.tenant_id).order_by(Audit.id.desc()).limit(100)).all()]

@@ -4,30 +4,33 @@ Security-first development backend. It is intentionally NOT deployed and must no
 be used with real personal/company documents until the production security gates
 in ROADMAP.md are completed.
 """
+import hashlib
 import os
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, select
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 DB_URL = os.getenv("PAGDOC_DATABASE_URL", "sqlite:///./pagdoc_dev.sqlite3")
 SECRET = os.getenv("PAGDOC_SECRET_KEY", "")
 if not SECRET or len(SECRET) < 32:
     raise RuntimeError("Set PAGDOC_SECRET_KEY to a random value of at least 32 characters")
 
+SESSION_SECONDS = int(os.getenv("PAGDOC_SESSION_SECONDS", "3600"))
+LOGIN_WINDOW_MINUTES = int(os.getenv("PAGDOC_LOGIN_WINDOW_MINUTES", "15"))
+LOGIN_MAX_FAILURES = int(os.getenv("PAGDOC_LOGIN_MAX_FAILURES", "5"))
+
 engine = create_engine(
     DB_URL,
     connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine)
-signer = URLSafeTimedSerializer(SECRET, salt="pagdoc-session-v1")
 hasher = PasswordHash.recommended()
 
 
@@ -49,6 +52,30 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="viewer")
     active: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    csrf_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
 
 
 class Project(Base):
@@ -125,6 +152,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Cache-Control"] = "no-store"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     return response
 
 
@@ -136,27 +164,54 @@ def db_session():
 Db = Annotated[Session, Depends(db_session)]
 
 
-def current_user(request: Request, db: Db) -> User:
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _client_hash(request: Request) -> str:
+    host = request.client.host if request.client else "unknown"
+    return _sha256(f"{SECRET}|{host}")
+
+
+def _active_session(request: Request, db: Session) -> UserSession | None:
     token = request.cookies.get("pagdoc_session")
     if not token:
+        return None
+    now = datetime.now(timezone.utc)
+    return db.scalar(
+        select(UserSession).where(
+            UserSession.token_hash == _sha256(token),
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+        )
+    )
+
+
+def current_user(request: Request, db: Db) -> User:
+    session = _active_session(request, db)
+    if session is None:
         raise HTTPException(401, "Authentication required")
-    try:
-        payload = signer.loads(token, max_age=3600)
-        user = db.get(User, int(payload["uid"]))
-        if not user or not user.active or user.tenant_id != int(payload["tid"]):
-            raise ValueError("Invalid user")
-        return user
-    except (BadSignature, SignatureExpired, ValueError, KeyError, TypeError):
+    user = db.get(User, session.user_id)
+    if not user or not user.active or user.tenant_id != session.tenant_id:
         raise HTTPException(401, "Invalid or expired session")
+    request.state.pagdoc_session_id = session.id
+    return user
 
 
 Auth = Annotated[User, Depends(current_user)]
 
 
-def csrf_guard(request: Request):
+def csrf_guard(request: Request, db: Db):
     cookie = request.cookies.get("pagdoc_csrf")
     header = request.headers.get("X-PAGDOC-CSRF")
-    if not cookie or not header or not secrets.compare_digest(cookie, header):
+    session = _active_session(request, db)
+    if (
+        not cookie
+        or not header
+        or session is None
+        or not secrets.compare_digest(cookie, header)
+        or not secrets.compare_digest(session.csrf_hash, _sha256(header))
+    ):
         raise HTTPException(403, "CSRF validation failed")
 
 
@@ -198,6 +253,18 @@ def add_audit(db: Session, user: User, action: str, target_type: str, target_id:
             target_id=target_id,
         )
     )
+
+
+def revoke_user_sessions(db: Session, user_id: int):
+    now = datetime.now(timezone.utc)
+    sessions = db.scalars(
+        select(UserSession).where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+        )
+    ).all()
+    for session in sessions:
+        session.revoked_at = now
 
 
 class Credentials(BaseModel):
@@ -246,23 +313,53 @@ def health():
 
 
 @app.post("/auth/login")
-def login(data: Credentials, response: Response, db: Db):
-    user = db.scalar(
-        select(User).where(
-            User.email == data.email.strip().lower(),
-            User.active == 1,
+def login(data: Credentials, response: Response, request: Request, db: Db):
+    email = data.email.strip().lower()
+    ip_hash = _client_hash(request)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=LOGIN_WINDOW_MINUTES)
+    failures = db.scalar(
+        select(func.count(LoginAttempt.id)).where(
+            LoginAttempt.email == email,
+            LoginAttempt.ip_hash == ip_hash,
+            LoginAttempt.occurred_at >= cutoff,
+        )
+    ) or 0
+    if failures >= LOGIN_MAX_FAILURES:
+        raise HTTPException(429, "Too many login attempts. Try again later")
+
+    user = db.scalar(select(User).where(User.email == email, User.active == 1))
+    if not user or not hasher.verify(data.password, user.password_hash):
+        db.add(LoginAttempt(email=email, ip_hash=ip_hash))
+        db.commit()
+        raise HTTPException(401, "Invalid credentials")
+
+    db.execute(
+        delete(LoginAttempt).where(
+            LoginAttempt.email == email,
+            LoginAttempt.ip_hash == ip_hash,
         )
     )
-    if not user or not hasher.verify(data.password, user.password_hash):
-        raise HTTPException(401, "Invalid credentials")
+    session_token = secrets.token_urlsafe(48)
     csrf_token = secrets.token_urlsafe(32)
+    db_session_row = UserSession(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        token_hash=_sha256(session_token),
+        csrf_hash=_sha256(csrf_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=SESSION_SECONDS),
+    )
+    db.add(db_session_row)
+    db.flush()
+    add_audit(db, user, "auth.login", "session", db_session_row.id)
+    db.commit()
+
     response.set_cookie(
         "pagdoc_session",
-        signer.dumps({"uid": user.id, "tid": user.tenant_id}),
+        session_token,
         httponly=True,
         secure=True,
         samesite="strict",
-        max_age=3600,
+        max_age=SESSION_SECONDS,
         path="/",
     )
     response.set_cookie(
@@ -271,17 +368,32 @@ def login(data: Credentials, response: Response, db: Db):
         httponly=False,
         secure=True,
         samesite="strict",
-        max_age=3600,
+        max_age=SESSION_SECONDS,
         path="/",
     )
     return {"authenticated": True, "role": user.role, "csrf_token": csrf_token}
 
 
 @app.post("/auth/logout")
-def logout(response: Response, user: Auth, _: Csrf):
+def logout(response: Response, request: Request, user: Auth, _: Csrf, db: Db):
+    session = _active_session(request, db)
+    if session is not None:
+        session.revoked_at = datetime.now(timezone.utc)
+        add_audit(db, user, "auth.logout", "session", session.id)
+        db.commit()
     response.delete_cookie("pagdoc_session", path="/", secure=True, httponly=True, samesite="strict")
     response.delete_cookie("pagdoc_csrf", path="/", secure=True, samesite="strict")
     return {"authenticated": False}
+
+
+@app.post("/auth/logout-all")
+def logout_all(response: Response, user: Auth, _: Csrf, db: Db):
+    revoke_user_sessions(db, user.id)
+    add_audit(db, user, "auth.logout_all", "user", user.id)
+    db.commit()
+    response.delete_cookie("pagdoc_session", path="/", secure=True, httponly=True, samesite="strict")
+    response.delete_cookie("pagdoc_csrf", path="/", secure=True, samesite="strict")
+    return {"authenticated": False, "all_sessions_revoked": True}
 
 
 @app.get("/me")
@@ -333,6 +445,8 @@ def set_user_active(user_id: int, data: ActiveIn, user: AdminWrite, db: Db):
     if target.id == user.id and not data.active:
         raise HTTPException(400, "Cannot deactivate your own account")
     target.active = 1 if data.active else 0
+    if not data.active:
+        revoke_user_sessions(db, target.id)
     add_audit(db, user, "user.activate" if data.active else "user.deactivate", "user", target.id)
     db.commit()
     return {"id": target.id, "active": bool(target.active)}

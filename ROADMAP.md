@@ -1,71 +1,83 @@
 # PAGDOC | Plan de desarrollo y criterios de avance
 
-Actualización: 13 de octubre de 2026.
+Actualización: 14 de octubre de 2026.
 
 ## Entregado y verificado
-- Landing page pública: `index.html`.
-- Panel público demostrativo multi-módulo con datos 100 % ficticios: `demo.html`.
-- GitHub Pages desplegado correctamente por CI.
-- API multiempresa de prototipo privada y **no desplegada**: `backend/app.py`.
-- Modelos y endpoints para usuarios, proyectos, trabajadores, vehículos, documentos, dashboard y auditoría.
-- Roles `admin`, `editor` y `viewer` con autorización por operación.
-- Separación lógica por empresa/tenant en consultas y modificaciones.
-- Autenticación con hash Argon2 y sesiones opacas almacenadas del lado servidor.
-- Revocación de sesión individual, cierre de todas las sesiones y revocación al desactivar un usuario.
-- Cookies `Secure`/`HttpOnly`/`SameSite=Strict` y protección CSRF para operaciones de escritura.
-- Límite de intentos fallidos de inicio de sesión por correo + origen anonimizado.
-- Cabeceras defensivas (`nosniff`, `DENY`, `no-referrer`, `no-store` y Permissions Policy).
-- Alta local restringida de empresa y administrador ficticios: `backend/bootstrap_demo.py`.
-- Soporte de conexión PostgreSQL mediante `psycopg` y esquema versionado con Alembic.
-- Migración inicial `0001_initial` validada automáticamente en CI sobre una base limpia.
-- Automatización de pruebas en `.github/workflows/backend-tests.yml`.
-- **CI confirmado en verde: 30 pruebas aprobadas** de autenticación, sesiones, rate limiting, CSRF, autorización, aislamiento multiempresa, auditoría y módulos centrales.
+- Landing page pública y panel demostrativo multi-módulo con datos 100 % ficticios mediante GitHub Pages.
+- API privada FastAPI multiempresa, todavía **no desplegada para uso real**.
+- Gestión de usuarios, proyectos, trabajadores, vehículos, documentos y dashboard.
+- Roles `admin`, `editor` y `viewer` con autorización por operación y separación por tenant.
+- Contraseñas Argon2, sesiones opacas revocables, cookies seguras, CSRF y límite de intentos de acceso.
+- MFA TOTP y recuperación administrativa de acceso; los códigos de recuperación de autoservicio siguen pendientes.
+- PostgreSQL mediante `psycopg` y esquema Alembic versionado hasta `0008_retention_policy`.
+- Migraciones completas validadas automáticamente tanto sobre SQLite limpia como PostgreSQL 17.
+- Pruebas concurrentes reales en PostgreSQL para versionado de archivos y cadena de auditoría.
+- Copia de seguridad y restauración PostgreSQL ejecutadas y verificadas en CI.
+- Requisitos documentales configurables, vigencias y motor de estados/alertas internas opt-in.
+- Historial de cambios de metadatos documentales por tenant.
+- Búsqueda paginada de documentos con filtros por estado, tipo, proyecto y texto.
+- Almacenamiento local cifrado de prototipo, validación de firma/tipo/tamaño y registro inmutable de versiones binarias.
+- Gateway de ingreso fail-closed: un archivo solo puede almacenarse después de validación y veredicto limpio de un scanner inyectado.
+- El gateway binario permanece sin endpoint HTTP hasta disponer de scanner antimalware real y almacenamiento privado de producción.
+- Auditoría sensible con sellos HMAC encadenados por tenant y verificación de manipulación dentro del tramo sellado.
+- La auditoría no se presenta como WORM/inmutable: falta un anclaje externo para detectar eliminación del extremo final de la cadena.
+- Endpoint de readiness con verificación de base y revisión Alembic en staging/producción.
+- Cabeceras API reforzadas, incluyendo CSP restrictiva y HSTS en staging/producción.
+- Motor de retención no destructivo: reglas por tipo documental, vista previa de candidatos y `legal hold` por documento.
+- La retención **no elimina nada automáticamente**; cualquier eliminación real queda bloqueada hasta aprobación de política y controles de producción.
+- Prueba end-to-end del servidor privado con tenant, usuario, proyecto y documentos exclusivamente ficticios.
+- Guard automático para impedir artefactos privados y patrones comunes de secretos en el repositorio público.
+
+## Evidencia automática actual
+La última ejecución verificada del backend finalizó en verde. La suite principal aprobó **121 pruebas**, el smoke test privado ficticio aprobó **1 prueba** y las pruebas de concurrencia PostgreSQL aprobaron **2 pruebas**, para un total de **124 pruebas aprobadas**. Las migraciones `0001` a `0008` se aplicaron correctamente sobre SQLite y PostgreSQL, y la restauración PostgreSQL fue validada dentro del mismo workflow.
 
 ## Siguiente bloque técnico antes de producción
-1. Ejecutar migraciones también contra una instancia PostgreSQL real de ensayo y validar concurrencia/transacciones.
-2. Implementar MFA y recuperación segura de acceso.
-3. Diseñar almacenamiento privado de archivos con autorización, cifrado, límites, validación de tipo y análisis antimalware.
-4. Añadir historial/versionado documental, reglas configurables de vigencia y notificaciones opt-in.
-5. Implementar copias de seguridad y ejecutar una restauración de prueba.
-6. Ampliar pruebas de accesibilidad, rendimiento, concurrencia y seguridad ofensiva controlada.
-7. Completar políticas de privacidad, retención y eliminación de datos.
-8. Desplegar beta privada exclusivamente con datos ficticios después de validar infraestructura y costos.
-9. Habilitar información real solo tras autorización expresa y validación de seguridad/privacidad.
+1. Integrar un scanner antimalware real y almacenamiento privado de objetos, manteniendo el gateway fail-closed.
+2. Diseñar y probar endpoints binarios privados de carga/descarga solo después de completar el punto anterior.
+3. Separar y gestionar secretos/llaves mediante infraestructura privada autorizada, con rotación y respaldo seguro.
+4. Incorporar monitoreo operativo, métricas, alertas de servicio y anclaje externo de auditoría.
+5. Ejecutar pruebas de rendimiento, accesibilidad y seguridad ofensiva controlada.
+6. Completar y aprobar formalmente privacidad, retención, eliminación y respuesta a incidentes; el motor actual solo genera vistas previas y legal holds.
+7. Desplegar una beta privada únicamente con datos ficticios, después de validar infraestructura y costos.
+8. Incorporar información real solamente con autorización expresa y después de aprobar seguridad/privacidad.
 
 ## Reglas permanentes del proyecto
 - Costo inicial aprobado: **$0 CLP**. No contratar recursos ni generar cobros sin aprobación explícita.
 - Nunca subir datos reales de trabajadores, clientes o MUFAS CHILE al repositorio público.
 - La demo pública no autentica usuarios ni almacena documentación.
-- El backend no está desplegado ni habilitado para producción.
+- El backend privado no está habilitado para producción con datos reales.
 - No enviar correos, invitaciones ni mensajes a terceros sin autorización del propietario.
 - No publicar secretos, contraseñas, tokens, archivos `.env`, bases de datos ni documentos privados.
+- Las funciones destructivas de retención/eliminación permanecen deshabilitadas hasta aprobación formal.
 
 ## Criterios para declarar PAGDOC 100 % operativo
-
-Cada criterio debe demostrarse con una prueba o evidencia técnica; escribir código por sí solo no lo completa.
+Cada criterio debe demostrarse con evidencia técnica; escribir código por sí solo no lo completa.
 
 - [x] Sitio comercial publicado mediante HTTPS en GitHub Pages.
 - [x] Demo pública multi-módulo con datos ficticios y exportación CSV.
-- [x] CI de backend en verde con pruebas de autorización y aislamiento multiempresa.
-- [x] Base de gestión de usuarios, roles, proyectos, trabajadores, vehículos, documentos y auditoría.
-- [x] Protección CSRF y cookies seguras en el prototipo de autenticación.
-- [x] Sesiones revocables del lado servidor y límite de intentos de inicio de sesión.
-- [x] Migraciones versionadas con Alembic y driver PostgreSQL incorporado; migración validada en CI sobre SQLite limpia.
-- [ ] MFA y recuperación de acceso.
-- [ ] Migraciones y operación probadas contra PostgreSQL real de ensayo.
-- [ ] Carga, descarga y versionado de archivos privados con cifrado, límites y análisis antimalware.
-- [ ] Reglas configurables de requisitos/vigencias y motor de alertas.
-- [ ] Copias de seguridad con restauración validada.
-- [ ] Auditoría ampliada e íntegra para cambios sensibles y accesos a documentos.
-- [ ] Pruebas de accesibilidad, rendimiento, concurrencia y revisión de seguridad antes de producción.
-- [ ] Política de privacidad, retención/eliminación y tratamiento de datos aprobada.
+- [x] CI de backend en verde con autorización y aislamiento multiempresa.
+- [x] Gestión base de usuarios, roles, proyectos, trabajadores, vehículos y documentos.
+- [x] CSRF, cookies seguras, sesiones revocables y protección frente a intentos repetidos de login.
+- [x] MFA TOTP y recuperación administrativa de acceso.
+- [x] Migraciones Alembic verificadas en SQLite y PostgreSQL.
+- [x] Concurrencia crítica verificada en PostgreSQL.
+- [x] Reglas configurables de requisitos/vigencias y alertas internas opt-in.
+- [x] Copia de seguridad y restauración PostgreSQL validadas en CI.
+- [x] Historial de metadatos documentales y registro de versiones binarias cifradas en la capa de servicio.
+- [x] Auditoría con cadena HMAC verificable para eventos sellados.
+- [x] Gateway de archivos fail-closed con interfaz antimalware y validaciones previas.
+- [x] Motor no destructivo de retención, vista previa y legal hold.
+- [x] Piloto técnico end-to-end automatizado con datos ficticios.
+- [ ] Códigos de recuperación MFA/autoservicio, si se aprueban para el modelo de producto.
+- [ ] Scanner antimalware real y almacenamiento privado de objetos desplegados.
+- [ ] Carga/descarga privada HTTP de archivos habilitada y probada sobre esa infraestructura.
+- [ ] Anclaje externo/almacenamiento inmutable de evidencia de auditoría.
+- [ ] Monitoreo, métricas, alertas operacionales y gestión/rotación de secretos.
+- [ ] Pruebas formales de accesibilidad, rendimiento y seguridad ofensiva antes de producción.
+- [ ] Política de privacidad, retención/eliminación y tratamiento de datos aprobada; ejecución destructiva todavía bloqueada.
 - [ ] Entorno privado desplegado con infraestructura y costos autorizados expresamente.
-- [ ] Piloto de extremo a extremo con datos ficticios aprobado antes de incorporar información real.
-- [ ] Autorización expresa antes de procesar documentación real.
+- [ ] Beta privada con datos ficticios aprobada antes de incorporar información real.
+- [ ] Autorización expresa para procesar documentación real.
 
-## Evidencia de la etapa actual
-- GitHub Actions de backend: **success**.
-- Suite: **30 passed**.
-- Migración Alembic inicial: **upgrade head exitoso** en CI.
-- GitHub Pages del panel demostrativo: despliegue exitoso.
-- No existen datos reales ni credenciales de producción incorporados intencionalmente al prototipo.
+## Estado de seguridad de datos
+No existen datos reales ni credenciales de producción incorporados intencionalmente al prototipo. El desarrollo continúa con información ficticia hasta completar los criterios pendientes.

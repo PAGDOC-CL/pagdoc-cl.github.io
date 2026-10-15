@@ -168,7 +168,8 @@ class Docker:
 
     def query(self, container, sql, *, live=False):
         user, database = ('pagdoc', 'pagdoc') if live else ('postgres', 'postgres')
-        return self.run(['exec', container, 'psql', '-U', user, '-d', database, '-At', '-v', 'ON_ERROR_STOP=1', '-c', sql]).decode().strip()
+        host = [] if live else ['-h', '127.0.0.1']
+        return self.run(['exec', container, 'psql'] + host + ['-U', user, '-d', database, '-At', '-v', 'ON_ERROR_STOP=1', '-c', sql]).decode().strip()
 
 
 def counts_query() -> str:
@@ -183,14 +184,15 @@ def verify_recovery(docker: Docker, folder: Path, manifest: dict) -> None:
         created = True
         for attempt in range(60):
             try:
-                docker.run(['exec', name, 'pg_isready', '-U', 'postgres'], timeout=5)
+                # The image's temporary initialization server has no TCP listener.
+                docker.run(['exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], timeout=5)
                 break
             except BackupError:
                 time.sleep(0.5)
         else:
             raise BackupError('La base aislada de verificación no inició.')
         with (folder / 'database.dump').open('rb') as dump:
-            docker.run(['exec', '-i', name, 'pg_restore', '--exit-on-error', '--no-owner', '-U', 'postgres', '-d', 'postgres'], stdin=dump)
+            docker.run(['exec', '-i', name, 'pg_restore', '--exit-on-error', '--no-owner', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres'], stdin=dump)
         if json.loads(docker.query(name, counts_query())) != manifest['counts']:
             raise BackupError('Los recuentos de la restauración no coinciden.')
         rows = json.loads(docker.query(name, "SELECT coalesce(json_agg(json_build_object('tenant_id',tenant_id,'object_key',object_key,'size_bytes',size_bytes,'sha256',sha256)),'[]'::json) FROM document_file_versions;"))

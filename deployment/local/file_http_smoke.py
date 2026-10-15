@@ -187,6 +187,14 @@ with request('/ops/files/batch/destinations',{'paths':worker_paths}) as response
 with request('/ops/files/batch/subjects',{'paths':worker_paths,'confirmed':True}) as response:assert json.load(response)['created_count']==1
 with request('/ops/files/batch/subjects',{'paths':worker_paths,'confirmed':True}) as response:assert json.load(response)['created_count']==0
 with request('/ops/files/batch/destinations',{'paths':worker_paths}) as response:assert all(item['status']=='resolved' for item in json.load(response)['items'])
+nested_worker_paths=['02_TRABAJADORES/Persona Ficticia P/Persona Ficticia/Curriculum Vitae/cv.pdf','02_TRABAJADORES/Persona Ficticia P/14. Certificado de antecedentes/a.pdf']
+with request('/ops/files/batch/destinations',{'paths':nested_worker_paths}) as response:
+    proposed=json.load(response)['items'];assert all(item['status']=='worker_missing' and item['proposed_worker_name']=='Persona Ficticia P' for item in proposed);assert 'Persona Ficticia.' in proposed[0]['hierarchy_warning']
+with request('/ops/files/batch/subjects',{'paths':nested_worker_paths,'confirmed':True}) as response:assert json.load(response)['created_count']==1
+with request('/ops/files/batch/destinations',{'paths':nested_worker_paths}) as response:
+    routed=json.load(response)['items'];assert all(item['status']=='resolved' for item in routed);assert routed[0]['worker_id']==routed[1]['worker_id'];assert routed[0]['hierarchy_warning']
+print('OK: nested worker categories retain their main person, with explicit alias review and no extra identities.')
+
 with request('/ops/files/documents',{'title':'Fictitious 30-day drug report','subject_kind':'company'}) as response:drug_id=json.load(response)['id']
 with request(f'/ops/files/documents/{drug_id}/versions?file_name=drug-report.pdf&expected_version=0',readable_pdf(drug=True),'application/pdf') as response:assert json.load(response)['version']==1
 for attempt in range(45):

@@ -495,3 +495,29 @@ def test_worker_folder_proposals_confirmed_scoped_without_login_accounts(files):
     assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).status_code==409
     login(c,2);assert c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items'][0]['status']=='worker_missing'
     login(c,5);assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).status_code==403
+
+
+def test_nested_worker_folders_use_main_person_and_warn_without_merging(files):
+    c,_,_=files
+    prefix='02_ACREDITACION_TRABAJADORES (1)/02_ACREDITACION_TRABAJADORES/02_TRABAJADORES_DE_TERRENO_EXTERNOS/'
+    paths=[prefix+'Persona Ficticia P/Persona Ficticia/Curriculum Vitae/cv.pdf',prefix+'Persona Ficticia P/14. Certificado de antecedentes/a.pdf',prefix+'Persona Ficticia P/08.Difusion procedimientos de trabajo seguro/b.pdf',prefix+'Otra Persona/Nombre Distinto/d.pdf']
+    items=c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items']
+    assert all(item['status']=='worker_missing' for item in items)
+    assert all(item['proposed_worker_name']=='Persona Ficticia P' for item in items[:3])
+    assert 'Persona Ficticia.' in items[0]['hierarchy_warning']
+    assert 'hierarchy_warning' not in items[1]
+    assert 'Nombre Distinto' in items[3]['hierarchy_warning']
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).json()['created_count']==2
+    items=c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items']
+    assert all(item['status']=='resolved' for item in items)
+    assert len({item['worker_id'] for item in items[:3]})==1
+    assert items[3]['worker_id']!=items[0]['worker_id']
+    assert 'Nombre Distinto' in items[3]['hierarchy_warning']
+    with core.SessionLocal() as db:
+        db.add(core.Worker(tenant_id=1,full_name='Nombre Distinto',active=1));db.commit()
+    blocked=c.post('/ops/files/batch/destinations',json={'paths':[paths[3]]}).json()['items'][0]
+    assert blocked['status']=='review'
+    assert c.post('/ops/files/batch/subjects',json={'paths':[paths[3]],'confirmed':True}).status_code==409
+    with core.SessionLocal() as db:
+        root=db.scalar(select(core.Worker).where(core.Worker.full_name=='Persona Ficticia P'));root.active=0;db.commit()
+    assert c.post('/ops/files/batch/destinations',json={'paths':[paths[0]]}).json()['items'][0]['status']=='review'

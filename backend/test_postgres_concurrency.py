@@ -18,6 +18,7 @@ import audit_integrity as integrity
 from file_gateway import ScanVerdict, SecureDocumentGateway
 from file_records import DocumentFileVersion, store_new_file_version
 from storage import EncryptedLocalStore
+import file_api
 
 
 TENANT_ID = 990001
@@ -35,6 +36,7 @@ def _seed():
         db.execute(delete(integrity.AuditSeal).where(integrity.AuditSeal.tenant_id == TENANT_ID))
         db.execute(delete(core.Audit).where(core.Audit.tenant_id == TENANT_ID))
         db.execute(delete(DocumentFileVersion).where(DocumentFileVersion.tenant_id == TENANT_ID))
+        db.execute(delete(file_api.FileSubject).where(file_api.FileSubject.tenant_id == TENANT_ID))
         db.execute(delete(core.Document).where(core.Document.tenant_id == TENANT_ID))
         db.execute(delete(core.User).where(core.User.tenant_id == TENANT_ID))
         db.execute(delete(core.Tenant).where(core.Tenant.id == TENANT_ID))
@@ -188,3 +190,29 @@ def test_postgres_prevents_double_personnel_assignment():
         with core.SessionLocal() as db:
             for model in [ops.AssignmentChange,ops.Assignment,ops.Service,integrity.AuditSeal,core.Audit,core.Worker,core.Project,core.User]:db.execute(delete(model).where(model.tenant_id==identity))
             db.execute(delete(core.Tenant).where(core.Tenant.id==identity));db.commit()
+
+
+def test_postgres_rejects_concurrent_upload_with_stale_expected_version(tmp_path,monkeypatch):
+    from fastapi import HTTPException
+    _seed()
+    with core.SessionLocal() as db:
+        db.add(file_api.FileSubject(document_id=DOCUMENT_ID,tenant_id=TENANT_ID,subject_kind='company'))
+        db.commit()
+    gateway=SecureDocumentGateway(EncryptedLocalStore(tmp_path/'guarded',Fernet.generate_key().decode()),CleanScanner())
+    monkeypatch.setattr(file_api,'configured_gateway',lambda:gateway)
+    barrier=threading.Barrier(2);results=[];lock=threading.Lock()
+    def upload(index):
+        try:
+            with core.SessionLocal() as db:
+                user=db.get(core.User,USER_ID)
+                barrier.wait(timeout=10)
+                file_api.store_upload(db,user,DOCUMENT_ID,0,f'fictitious-{index}.pdf','application/pdf',b'%PDF-1.7\n% fictitious concurrent upload\n%%EOF')
+                status=201
+        except HTTPException as exc:status=exc.status_code
+        except Exception as exc:status=type(exc).__name__
+        with lock:results.append(status)
+    threads=[threading.Thread(target=upload,args=(i,)) for i in range(2)]
+    for thread in threads:thread.start()
+    for thread in threads:thread.join(timeout=30)
+    assert sorted(results)==[201,409]
+    assert len(list(gateway.store.root.rglob('*.bin')))==1

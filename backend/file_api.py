@@ -1,0 +1,236 @@
+"""Explicitly enabled company/vehicle files; authenticated, scoped, scanned and versioned."""
+import asyncio
+import os
+import re
+import threading
+from datetime import date
+from pathlib import Path
+from typing import Annotated, Literal
+from urllib.parse import quote
+
+from fastapi import Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, func, select
+from sqlalchemy.orm import Mapped, mapped_column
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
+
+import app as core
+from file_gateway import GatewayError
+from file_records import DocumentFileVersion, list_file_versions, read_file_version, store_new_file_version
+from operations_api import owned, permit, review_state
+from private_files import configured_gateway
+from storage import EXTENSIONS, MAX_BYTES, StorageError
+
+
+class FileSubject(core.Base):
+    __tablename__ = 'file_document_subjects'
+    __table_args__ = (CheckConstraint("subject_kind IN ('company','vehicle')", name='ck_file_subject_kind'), CheckConstraint("(subject_kind = 'company' AND vehicle_id IS NULL) OR (subject_kind = 'vehicle' AND vehicle_id IS NOT NULL)", name='ck_file_subject_vehicle'))
+    document_id: Mapped[int] = mapped_column(ForeignKey('documents.id'), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey('tenants.id'), index=True)
+    subject_kind: Mapped[str] = mapped_column(String(20))
+    vehicle_id: Mapped[int | None] = mapped_column(ForeignKey('vehicles.id'), nullable=True)
+
+
+FileRead = Annotated[core.User, Depends(permit('documents.read'))]
+
+
+def enabled() -> bool:
+    return os.getenv('PAGDOC_BINARY_HTTP_ENABLED', '0') == '1'
+
+
+def require_enabled():
+    if not enabled():
+        raise HTTPException(503, 'La carga y descarga privada todavía no está habilitada por el administrador del servidor.')
+
+
+def gateway():
+    try:
+        return configured_gateway()
+    except (KeyError, ValueError, OSError):
+        raise HTTPException(503, 'El almacenamiento privado no está disponible.')
+
+
+def scoped_document(db, user, document_id, *, lock=False):
+    doc = owned(db, core.Document, user.tenant_id, document_id, lock)
+    link = db.scalar(select(FileSubject).where(FileSubject.document_id == doc.id, FileSubject.tenant_id == user.tenant_id))
+    if link is None:
+        raise HTTPException(404, 'Documento privado no encontrado.')
+    return doc, link
+
+
+def latest_version(db, tenant_id, document_id):
+    return db.scalar(select(func.max(DocumentFileVersion.version)).where(DocumentFileVersion.tenant_id == tenant_id, DocumentFileVersion.document_id == document_id)) or 0
+
+
+@core.app.get('/ops/files/status')
+def status(user: FileRead):
+    ready = False
+    if enabled():
+        try:
+            gateway().scanner.engine()
+            ready = True
+        except (ValueError, HTTPException, OSError):
+            pass
+    return {'enabled': enabled(), 'ready_for_upload': ready, 'max_bytes': MAX_BYTES, 'extensions': ['.pdf','.png','.jpg','.jpeg','.docx','.xlsx']}
+
+
+@core.app.get('/ops/files/subjects')
+def subjects(user: FileRead, db: core.Db):
+    tenant = db.get(core.Tenant, user.tenant_id)
+    vehicles = db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id == user.tenant_id, core.Vehicle.active == 1).order_by(core.Vehicle.id)).all()
+    return {'company': tenant.name, 'vehicles': [{'id': v.id, 'label': v.label, 'plate': v.plate} for v in vehicles]}
+
+
+class NewVehicle(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    label: str = Field(min_length=2, max_length=120)
+    plate: str = Field(min_length=4, max_length=20)
+    vehicle_type: str | None = Field(default=None, max_length=80)
+
+
+@core.app.post('/ops/files/vehicles', status_code=201)
+def create_vehicle(data: NewVehicle, user: core.Editor, db: core.Db):
+    require_enabled()
+    plate = re.sub(r'[ -]', '', data.plate.upper())
+    if not re.fullmatch(r'[A-Z0-9]{4,12}', plate):
+        raise HTTPException(422, 'Revisa la patente: usa entre 4 y 12 letras o números.')
+    db.scalar(select(core.Tenant).where(core.Tenant.id == user.tenant_id).with_for_update())
+    existing = db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id == user.tenant_id)).all()
+    if any(re.sub(r'[ -]', '', (v.plate or '').upper()) == plate for v in existing):
+        raise HTTPException(409, 'La patente ya está registrada. Selecciona el vehículo existente; no se fusionaron registros.')
+    vehicle = core.Vehicle(tenant_id=user.tenant_id, label=data.label, plate=plate, vehicle_type=data.vehicle_type, active=1)
+    db.add(vehicle)
+    db.flush()
+    core.add_audit(db, user, 'vehicle.private_create', 'vehicle', vehicle.id)
+    db.commit()
+    return {'id': vehicle.id, 'label': vehicle.label, 'plate': vehicle.plate}
+
+
+class NewFileDocument(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    title: str = Field(min_length=2, max_length=200)
+    subject_kind: Literal['company','vehicle']
+    vehicle_id: int | None = Field(default=None, gt=0)
+    project_id: int | None = Field(default=None, gt=0)
+    expires_on: date | None = None
+    @model_validator(mode='after')
+    def binding(self):
+        if (self.subject_kind == 'vehicle') != (self.vehicle_id is not None):
+            raise ValueError('Selecciona un vehículo solo para documentos de vehículo.')
+        return self
+
+
+@core.app.post('/ops/files/documents', status_code=201)
+def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
+    require_enabled()
+    subject_name = db.get(core.Tenant, user.tenant_id).name
+    if data.vehicle_id is not None:
+        vehicle = owned(db, core.Vehicle, user.tenant_id, data.vehicle_id)
+        if not vehicle.active:
+            raise HTTPException(409, 'El vehículo está inactivo.')
+        subject_name = vehicle.plate or vehicle.label
+    if data.project_id is not None:
+        owned(db, core.Project, user.tenant_id, data.project_id)
+    doc = core.Document(tenant_id=user.tenant_id, title=data.title, subject_type=data.subject_kind, subject_name=subject_name, project_id=data.project_id, expires_on=data.expires_on)
+    db.add(doc)
+    db.flush()
+    db.add(FileSubject(document_id=doc.id, tenant_id=user.tenant_id, subject_kind=data.subject_kind, vehicle_id=data.vehicle_id))
+    core.add_audit(db, user, 'document.private_create', 'document', doc.id)
+    db.commit()
+    return {'id': doc.id, 'version': 0, 'review_state': 'pending'}
+
+
+@core.app.get('/ops/files/documents')
+def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle'] | None = None):
+    query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
+    if subject_kind:
+        query = query.where(FileSubject.subject_kind == subject_kind)
+    total = db.scalar(select(func.count()).select_from(query.subquery()))
+    rows = db.execute(query.order_by(core.Document.id.desc()).offset(offset).limit(limit)).all()
+    result = []
+    for doc, link in rows:
+        version = latest_version(db, user.tenant_id, doc.id)
+        file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == doc.id, DocumentFileVersion.version == version))
+        state, _, _ = review_state(db, doc)
+        result.append({'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id, 'expires_on': doc.expires_on, 'expiry_status': core.doc_state(doc), 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
+    core.add_audit(db, user, 'document.private_list', 'tenant', user.tenant_id)
+    db.commit()
+    return {'items': result, 'total': total, 'offset': offset, 'limit': limit}
+
+
+def store_upload(db, user, document_id, expected_version, name, media_type, payload):
+    scoped_document(db, user, document_id, lock=True)
+    if latest_version(db, user.tenant_id, document_id) != expected_version:
+        raise HTTPException(409, 'El archivo cambió. Actualiza la lista antes de cargar otra versión.')
+    try:
+        row = store_new_file_version(db, user, document_id, gateway(), name, media_type, payload)
+    except GatewayError as exc:
+        db.rollback()
+        if 'scanner unavailable' in str(exc).lower():
+            raise HTTPException(503, 'El antivirus no está disponible o no pudo completar el análisis. No se guardó el archivo.')
+        raise HTTPException(422, 'Archivo rechazado por validación o análisis antimalware. No se guardó: ' + str(exc))
+    return {'document_id': document_id, 'version': row.version, 'sha256': row.sha256, 'size_bytes': row.size_bytes, 'review_state': 'pending'}
+
+
+async def receive_upload(document_id, request, user, db, file_name, expected_version):
+    require_enabled()
+    await run_in_threadpool(scoped_document, db, user, document_id)
+    media_type = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+    if media_type not in EXTENSIONS:
+        raise HTTPException(415, 'Tipo no admitido. Usa PDF, PNG, JPEG, DOCX o XLSX.')
+    suffix = Path(file_name).suffix.lower()
+    if suffix != EXTENSIONS[media_type] and not (media_type == 'image/jpeg' and suffix == '.jpeg'):
+        raise HTTPException(422, 'El nombre y el tipo del archivo no coinciden.')
+    try:
+        declared = int(request.headers.get('content-length', '0'))
+    except ValueError:
+        raise HTTPException(400, 'Tamaño de carga inválido.')
+    if declared < 0 or declared > MAX_BYTES:
+        raise HTTPException(413, 'El límite por archivo es de 15 MiB.')
+    payload = bytearray()
+    try:
+        async with asyncio.timeout(60):
+            async for block in request.stream():
+                if len(payload) + len(block) > MAX_BYTES:
+                    raise HTTPException(413, 'El archivo excede el límite de carga.')
+                payload.extend(block)
+    except TimeoutError:
+        raise HTTPException(408, 'La carga tardó demasiado. Intenta nuevamente.')
+    except ClientDisconnect:
+        raise HTTPException(400, 'La carga se interrumpió.')
+    return await run_in_threadpool(store_upload, db, user, document_id, expected_version, file_name, media_type, bytes(payload))
+
+
+_upload_slots = threading.BoundedSemaphore(2)
+
+
+@core.app.post('/ops/files/documents/{document_id}/versions', status_code=201)
+async def upload(document_id: int, request: Request, user: core.Editor, db: core.Db, file_name: str = Query(min_length=1, max_length=160), expected_version: int = Query(ge=0)):
+    if not _upload_slots.acquire(blocking=False):
+        raise HTTPException(429, 'Hay dos cargas en curso. Espera y vuelve a intentarlo.')
+    try:
+        return await receive_upload(document_id, request, user, db, file_name, expected_version)
+    finally:
+        _upload_slots.release()
+
+
+@core.app.get('/ops/files/documents/{document_id}/versions')
+def versions(document_id: int, user: FileRead, db: core.Db):
+    scoped_document(db, user, document_id)
+    return list_file_versions(db, user, document_id)
+
+
+@core.app.get('/ops/files/documents/{document_id}/versions/{version}/download')
+def download(document_id: int, version: int, user: FileRead, db: core.Db):
+    require_enabled()
+    scoped_document(db, user, document_id)
+    row = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == document_id, DocumentFileVersion.version == version))
+    if row is None:
+        raise HTTPException(404, 'Versión no encontrada.')
+    filename, media_type = row.original_name, row.media_type
+    try:
+        payload = read_file_version(db, user, document_id, version, gateway())
+    except (GatewayError, StorageError):
+        raise HTTPException(503, 'No se pudo verificar la integridad del archivo almacenado.')
+    return Response(payload, media_type=media_type, headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename, safe=''), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})

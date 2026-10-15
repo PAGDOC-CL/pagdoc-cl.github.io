@@ -95,6 +95,12 @@ def update_document(document_id: int, data: DocumentPatch, user: core.Editor, db
 
     doc = _document_for_tenant(db, user.tenant_id, document_id, True)
 
+    binding_table = core.Base.metadata.tables.get('file_document_subjects')
+    binding = db.execute(select(binding_table).where(binding_table.c.document_id == doc.id, binding_table.c.tenant_id == user.tenant_id)).first() if binding_table is not None else None
+    if binding is not None:
+        if ('subject_type' in data.model_fields_set and data.subject_type != doc.subject_type) or ('subject_name' in data.model_fields_set and data.subject_name != doc.subject_name):
+            raise HTTPException(409, 'El sujeto de un documento privado está vinculado a su empresa o vehículo y no puede reasignarse.')
+
     if "project_id" in data.model_fields_set and data.project_id is not None:
         project = db.scalar(
             select(core.Project).where(

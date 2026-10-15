@@ -330,6 +330,8 @@ registros; solo propuestas de tipo y fechas, avisos y confirmaciones. El texto
 temporal se procesa en directorios privados sobre tmpfs, con límites de procesos,
 memoria, CPU, páginas, tamaño y tiempo. Las fórmulas de Excel no se ejecutan.
 Los archivos antiguos también se analizan; cada resultado pertenece a su versión.
+Al reiniciar, un bloqueo exclusivo de trabajador permite retomar solo los análisis
+interrumpidos, sin duplicar archivos ni borrar resultados completos o confirmados.
 
 Una fecha de vencimiento explícita, única y sin contradicciones, cuyo contenido
 confirme también el nombre completo o patente del destino, puede actualizar

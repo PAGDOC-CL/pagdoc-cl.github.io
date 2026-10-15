@@ -156,3 +156,19 @@ def test_conflicting_metadata_and_superseded_analysis_are_never_applied(files):
     with core.SessionLocal() as db:
         old=db.scalar(select(analysis.FileAnalysis).join(analysis.DocumentFileVersion,analysis.DocumentFileVersion.id==analysis.FileAnalysis.file_version_id).where(analysis.FileAnalysis.document_id==identity,analysis.DocumentFileVersion.version==2))
         assert old.status=='superseded'
+
+
+def test_worker_restart_requeues_only_incomplete_analysis(files):
+    from analysis_worker import recover_interrupted
+    c,store,scanner=files
+    first=create(c);second=create(c)
+    assert upload(c,first).status_code==201 and upload(c,second).status_code==201
+    with core.SessionLocal() as db:
+        versions=list(db.scalars(select(analysis.DocumentFileVersion).order_by(analysis.DocumentFileVersion.id)))
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=first,file_version_id=versions[0].id,status='processing'))
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=second,file_version_id=versions[1].id,status='confirmed',result_json='{"document_type":"certificado","revision":1}'))
+        db.commit()
+        assert recover_interrupted(db)==1
+        assert db.scalar(select(analysis.FileAnalysis).where(analysis.FileAnalysis.document_id==second)).status=='confirmed'
+        assert len(list(db.scalars(select(analysis.DocumentFileVersion))))==2
+    assert len(list(store.root.rglob('*.bin')))==2

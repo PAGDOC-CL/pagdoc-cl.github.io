@@ -108,6 +108,24 @@ with request('/ops/email-alerts') as response:
 with request('/ops/email-alerts/preview') as response:assert json.load(response)['delivery_configured'] is False
 print('OK: folder destinations, identical detection, confirmed replacement, preserved history and private email preview without delivery.')
 
+# Folder-created vehicle records require a joint confirmation and are idempotent.
+folder_paths=['Vehiculos/Fictitious ABCD-12/evidence.pdf','Vehiculos/Other folder ABCD-12/second.pdf']
+with request('/ops/files/batch/destinations',{'paths':folder_paths}) as response:
+    assert all(item['status']=='vehicle_missing' for item in json.load(response)['items'])
+with request('/ops/files/batch/vehicles',{'paths':folder_paths,'confirmed':True}) as response:
+    assert json.load(response)['created_count']==1
+with request('/ops/files/batch/vehicles',{'paths':folder_paths,'confirmed':True}) as response:
+    assert json.load(response)['created_count']==0
+with request('/ops/files/batch/destinations',{'paths':folder_paths}) as response:
+    resolved=json.load(response)['items'];assert all(item['status']=='resolved' for item in resolved)
+    assert resolved[0]['vehicle_id']==resolved[1]['vehicle_id']
+entry={key:resolved[0][key] for key in ['path','subject_kind','vehicle_id']}
+entry['sha256']=hashlib.sha256(content).hexdigest()
+with request('/ops/files/batch/preview',{'entries':[entry]}) as response:vehicle_plan=json.load(response)['items'][0]
+vehicle_query={key:entry[key] for key in ['path','subject_kind','vehicle_id']};vehicle_query.update(expected_version=vehicle_plan['expected_version'],allow_replace='false')
+with request('/ops/files/batch/item?'+urlencode(vehicle_query),content,'application/pdf') as response:assert json.load(response)['status']=='created'
+print('OK: confirmed joint vehicle registration, same-plate reuse and correctly bound private folder upload.')
+
 # A valid fictitious PDF exercises the actual raster renderer and analysis worker.
 def readable_pdf():
     stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'

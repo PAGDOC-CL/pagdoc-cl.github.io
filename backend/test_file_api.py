@@ -349,3 +349,44 @@ def test_batch_normalizes_case_and_enforces_csrf(files):
     assert c.post('/ops/files/batch/preview',json={'entries':[entry,entry]}).status_code==422
     del c.headers['X-PAGDOC-CSRF']
     assert c.post('/ops/files/batch/preview',json={'entries':[entry]}).status_code==403
+
+
+def test_folder_vehicle_registration_is_confirmed_idempotent_and_scoped(files):
+    c,_,_=files
+    paths=['03_ACREDITACION_VEHICULOS/Arrendados/Fictitious ABCD-12/a.pdf',
+           '03_ACREDITACION_VEHICULOS/Mufas/Fictitious ABCD-12/b.pdf',
+           'Vehiculos/Fictitious AB-1234/c.pdf','Vehiculos/TEST-11/d.pdf']
+    result=c.post('/ops/files/batch/destinations',json={'paths':paths})
+    assert result.status_code==200
+    assert [x['status'] for x in result.json()['items']]==['vehicle_missing']*3+['resolved']
+    assert len(c.get('/ops/files/subjects').json()['vehicles'])==1
+    assert c.post('/ops/files/batch/vehicles',json={'paths':paths}).status_code==422
+    assert c.post('/ops/files/batch/vehicles',json={'paths':paths,'confirmed':False}).status_code==422
+    result=c.post('/ops/files/batch/vehicles',json={'paths':paths,'confirmed':True})
+    assert result.status_code==200,result.text
+    assert result.json()['created_count']==2
+    assert c.post('/ops/files/batch/vehicles',json={'paths':paths,'confirmed':True}).json()['created_count']==0
+    assert all(x['status']=='resolved' for x in c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items'])
+    with core.SessionLocal() as db:
+        vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==1)).all()
+        assert len(vehicles)==3 and all(v.vehicle_type is None for v in vehicles if v.plate!='TEST11')
+        assert db.scalar(select(core.Document.id)) is None
+    login(c,2)
+    assert c.post('/ops/files/batch/destinations',json={'paths':[paths[0]]}).json()['items'][0]['status']=='vehicle_missing'
+    assert len(c.get('/ops/files/subjects').json()['vehicles'])==1
+
+
+def test_folder_vehicle_registration_refuses_ambiguity_inactive_and_missing_permission(files):
+    c,_,_=files
+    paths=['Vehiculos/ABCD-12/a.pdf','Sin destino/a.pdf']
+    assert c.post('/ops/files/batch/vehicles',json={'paths':paths,'confirmed':True}).status_code==409
+    assert len(c.get('/ops/files/subjects').json()['vehicles'])==1
+    with core.SessionLocal() as db:
+        db.get(core.Vehicle,1).active=0;db.commit()
+    for path in ['Vehiculos/TEST-11/a.pdf','Vehiculos/ABCD-12 EFGH-34/a.pdf','Vehiculos/modelo2026/a.pdf']:
+        assert c.post('/ops/files/batch/destinations',json={'paths':[path]}).json()['items'][0]['status']=='review'
+        assert c.post('/ops/files/batch/vehicles',json={'paths':[path],'confirmed':True}).status_code==409
+    del c.headers['X-PAGDOC-CSRF']
+    assert c.post('/ops/files/batch/vehicles',json={'paths':[paths[0]],'confirmed':True}).status_code==403
+    login(c,5)
+    assert c.post('/ops/files/batch/vehicles',json={'paths':[paths[0]],'confirmed':True}).status_code==403

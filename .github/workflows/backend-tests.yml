@@ -134,6 +134,10 @@ jobs:
           PY
           docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml exec -T proxy cat /data/caddy/pki/authorities/local/root.crt > "$RUNNER_TEMP/pagdoc-private/root.crt"
           python3 deployment/local/smoke.py "$RUNNER_TEMP/pagdoc-private/root.crt"
+      - name: Validate opt-in private remote listener
+        run: |
+          PAGDOC_NETBIRD_IP=100.64.10.2 docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml -f deployment/local/compose.remote.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); assert {p["host_ip"] for p in c["services"]["proxy"]["ports"]}=={"127.0.0.1","100.64.10.2"}; assert not c["services"]["api"].get("ports"); assert not c["services"]["database"].get("ports"); print("OK: remote composition binds only loopback and the private peer, with no API/database ports.")'
+          docker run --rm --network none -e PAGDOC_HTTPS_ADDRESSES='https://localhost:8443, https://100.64.10.2:8443' -v "$PWD/deployment/local/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - name: Stop temporary CI services
         if: always()
         run: docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml --profile notifications down

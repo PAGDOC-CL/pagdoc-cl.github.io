@@ -1,0 +1,12 @@
+# Activated only after the host has a verified, connected NetBird IPv4 address.
+# Base localhost listener remains available. API/database ports remain private.
+services:
+  api:
+    environment:
+      PAGDOC_PUBLIC_ORIGIN: https://${PAGDOC_NETBIRD_IP:?Connect NetBird first}:8443
+      PAGDOC_PASSWORD_RESET_URL: https://${PAGDOC_NETBIRD_IP:?Connect NetBird first}:8443/app
+  proxy:
+    environment:
+      PAGDOC_HTTPS_ADDRESSES: https://localhost:8443, https://${PAGDOC_NETBIRD_IP:?Connect NetBird first}:8443
+    ports:
+      - '${PAGDOC_NETBIRD_IP:?Connect NetBird first}:8443:8443'

@@ -4,9 +4,16 @@ task="${1:-check}"
 local_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 runtime_env="${PAGDOC_RUNTIME_ENV:-$HOME/.config/pagdoc-private/runtime.env}"
 compose=(sudo docker compose --project-name pagdoc-private --env-file "$runtime_env" -f "$local_dir/compose.local.yml")
+remote_env="${PAGDOC_REMOTE_ENV:-$(dirname -- "$runtime_env")/remote.env}"
+if [[ -f "$remote_env" && "$task" != remote-disable ]]; then
+  PAGDOC_NETBIRD_IP="$(python3 "$local_dir/remote_access.py" check-config)"
+  export PAGDOC_NETBIRD_IP
+  compose+=(--env-file "$remote_env" -f "$local_dir/compose.remote.yml")
+fi
 case "$task" in
   start)
     python3 "$local_dir/generate_config.py" "$runtime_env"
+    if [[ -f "$remote_env" ]]; then python3 "$local_dir/remote_access.py" check-live; fi
     sudo service docker start
     profiles=()
     wait_seconds=240
@@ -20,6 +27,23 @@ case "$task" in
     "${compose[@]}" "${profiles[@]}" up --build --detach --wait --wait-timeout "$wait_seconds"
     echo 'Servidor privado disponible en https://localhost:8443/app tras confiar en su certificado local. Revisa los controles pendientes antes de incorporar documentos.'
     ;;
+  remote-install) bash "$local_dir/install-netbird.sh" ;;
+  remote-connect)
+    command -v netbird >/dev/null || { echo 'Ejecuta primero control.sh remote-install.' >&2; exit 1; }
+    sudo netbird service start
+    sudo netbird up --hostname pagdoc-server --disable-dns --disable-client-routes --disable-server-routes --disable-ipv6 --allow-server-ssh=false
+    ;;
+  remote-enable)
+    python3 "$local_dir/remote_access.py" enable
+    bash "$local_dir/control.sh" start
+    python3 "$local_dir/remote_access.py" verify
+    ;;
+  remote-disable)
+    python3 "$local_dir/remote_access.py" disable
+    bash "$local_dir/control.sh" start
+    ;;
+  remote-status) python3 "$local_dir/remote_access.py" status ;;
+  remote-check) python3 "$local_dir/remote_access.py" verify ;;
   stop) "${compose[@]}" --profile files --profile notifications stop ;;
   status) "${compose[@]}" --profile files --profile notifications ps ;;
   files-start)
@@ -45,5 +69,5 @@ case "$task" in
     sudo docker compose version
     echo 'Prerequisites available. Documents and SharePoint are not enabled by this command.'
     ;;
-  *) echo 'Use start, stop, status, files-start, files-check, files-enable, provision, provision-members, configure-email, provision-beta, certificate or check.' >&2; exit 2 ;;
+  *) echo 'Use start, stop, status, files-start, files-check, files-enable, provision, provision-members, configure-email, provision-beta, certificate, remote-install, remote-connect, remote-enable, remote-disable, remote-status, remote-check or check.' >&2; exit 2 ;;
 esac

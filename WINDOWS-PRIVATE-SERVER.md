@@ -42,6 +42,18 @@ La primera descarga y construcción necesita Internet. La base de datos y la API
 
 Abre `https://localhost:8443/app`, inicia sesión y configura MFA desde **Mi seguridad**. La interfaz muestra el nombre de la empresa guardado en la base privada. No contiene usuarios, servicios ni documentos de ejemplo precargados.
 
+### Mantener abierta la instancia local
+
+Para usar PAGDOC durante una sesión de trabajo, ejecuta en PowerShell:
+
+```powershell
+.\PAGDOC.ps1 -Action Run
+```
+
+Espera a que los contenedores estén saludables y abre `https://localhost:8443/app`. Conserva esa ventana abierta. `Run` arranca la misma instalación y mantiene un proceso de Ubuntu en primer plano; no crea otra base ni cambia credenciales. Los servicios de systemd por sí solos no mantienen viva una instancia WSL, según la [documentación de Microsoft](https://learn.microsoft.com/en-us/windows/wsl/systemd). Esto puede explicar una conexión rechazada después de terminar los comandos de inicio.
+
+Ctrl+C termina la sesión en primer plano. Para detener los contenedores de forma explícita usa `Stop`; sus volúmenes se conservan. `Run` no instala arranque automático ni mantiene el equipo disponible cuando Windows está apagado o suspendido. El arranque en Windows requiere comprobarse en el equipo final.
+
 Para una prueba totalmente ficticia separada sigue disponible `bash deployment/local/control.sh provision-beta`; no es el comando de registro corporativo.
 
 ### Actualizar una instalación ya creada

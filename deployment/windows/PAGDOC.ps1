@@ -1,6 +1,6 @@
 # Run from Windows PowerShell. All application data stays inside the selected WSL distribution.
 param(
-    [ValidateSet('Check','Install','Start','Stop','Status','Provision','TrustCertificate')]
+    [ValidateSet('Check','Install','Start','Run','Stop','Status','Provision','TrustCertificate')]
     [string]$Action = 'Check',
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string]$Distribution = 'Ubuntu'
@@ -34,6 +34,10 @@ cd "$target"
 bash deployment/local/install-engine.sh
 '@
     Invoke-Ubuntu $install
+} elseif ($Action -eq 'Run') {
+    Write-Host 'PAGDOC: keep this window open while using https://localhost:8443/app'
+    Write-Host 'After all containers are healthy, open that address in your browser. Ctrl+C ends this foreground session.'
+    Invoke-Ubuntu 'cd "$HOME/pagdoc-private" && bash deployment/local/control.sh start && exec sleep infinity'
 } elseif ($Action -eq 'TrustCertificate') {
     $certificate = & wsl.exe -d $Distribution -- bash -lc 'cd "$HOME/pagdoc-private" && bash deployment/local/control.sh certificate'
     if ($LASTEXITCODE -ne 0 -or ($certificate -join "`n") -notmatch '-----BEGIN CERTIFICATE-----') { throw 'Start PAGDOC first; the local certificate is not available.' }

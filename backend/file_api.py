@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from fastapi import Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint, func, or_, select
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint, func, or_, select, text
 from sqlalchemy.orm import Mapped, mapped_column
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
@@ -447,8 +447,15 @@ def preview_batch(data: BatchPreview, user: core.Editor, db: core.Db):
 
 
 def store_batch_item(db, user, entry, expected_document_id, expected_version, allow_replace, media, payload):
-    db.scalar(select(core.Tenant).where(core.Tenant.id == user.tenant_id).with_for_update())
+    # Serialize a scoped path before resolving it, without taking the tenant
+    # audit lock ahead of document locks used by ordinary attachment uploads.
+    if db.get_bind().dialect.name == 'postgresql':
+        identity = f'{user.tenant_id}:{entry.subject_kind}:{entry.vehicle_id}:{destination_key(entry.path)}'
+        key = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], 'big', signed=True)
+        db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': key})
     doc, destination, name = resolve_destination(db, user, entry)
+    if doc is not None:
+        scoped_document(db, user, doc.id, lock=True)
     version = latest_version(db, user.tenant_id, doc.id) if doc else 0
     if (doc.id if doc else None) != expected_document_id or version != expected_version:
         raise HTTPException(409, 'El destino cambió después de la comprobación. Vuelve a comprobar y confirmar antes de guardar.')

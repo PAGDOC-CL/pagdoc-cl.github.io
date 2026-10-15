@@ -1,5 +1,6 @@
 """Private optional daily digest worker; SMTP and each recipient must opt in."""
 import time
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,8 @@ def run_once():
 
 if __name__=='__main__':
     while True:
-        try:run_once()
+        try:
+            run_once()
+            Path('/tmp/pagdoc-notifications-heartbeat').touch()
         except Exception:print('PAGDOC: no se completó la comprobación de avisos. Revisa el servicio privado.',flush=True)
         time.sleep(900)

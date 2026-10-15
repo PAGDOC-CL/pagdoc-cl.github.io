@@ -238,7 +238,8 @@ requiere una sola empresa y un administrador inicial. Crea cuentas activas con
 rol administrador y genera contraseñas fuertes que muestra únicamente en la
 terminal local. Para cuentas existentes conserva su contraseña, actualiza el rol
 y revoca las sesiones anteriores. No envía invitaciones ni contraseñas por correo.
-Entregar cada clave por un canal privado y cambiarla en **Mi seguridad**.
+Entregar cada clave por un canal privado. Otro administrador puede restablecer
+el acceso desde **Usuarios y acceso**.
 El acceso desde otro computador requiere configurar una red privada; `localhost`
 solo funciona en el equipo servidor.
 

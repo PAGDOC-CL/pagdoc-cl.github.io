@@ -578,15 +578,35 @@ def destination_proposals(paths,user,db):
         segments={re.sub(r'^\d+\s+','',clean_name(part)) for part in folders.split('/')}
         matched_workers=[w for w in workers if clean_name(w.full_name) in segments]
         matched_projects=[p for p in projects if clean_name(p.name) in segments]
-        excluded={'trabajadores','trabajador','personal','colaboradores','acreditacion','empresa','empresarial','examen','examenes','certificado','certificados','contrato','anexo','registro','entrega','elementos','proteccion','fotografia','fotografias','cursos','curso','documentos','documentacion','licencia','cedula','identidad','finiquito','cotizaciones','pago','salud','seguridad','prevencion','induccion','procedimiento','ocupacional','preocupacional','alcohol','drogas','riesgos','hoja','vida','capacitacion','capacitaciones','varios','varias','generales','general','mufas','chile'}
+        excluded={'trabajadores','trabajador','personal','colaboradores','acreditacion','empresa','empresarial','examen','examenes','certificado','certificados','contrato','anexo','registro','entrega','elementos','proteccion','fotografia','fotografias','cursos','curso','documentos','documentacion','licencia','cedula','identidad','finiquito','cotizaciones','pago','salud','seguridad','prevencion','induccion','procedimiento','ocupacional','preocupacional','alcohol','drogas','riesgos','hoja','vida','capacitacion','capacitaciones','varios','varias','generales','general','mufas','chile','curriculum','vitae','difusion','procedimientos','trabajo','seguro','antecedentes','traslado','competencias','laborales','extintores','electrico'}
         person_candidates={}
+        person_parts=[]
+        workforce_seen=False
         for segment in folders.split('/'):
             words=clean_name(segment).split()
-            if 2<=len(words)<=7 and not any(word in excluded or any(c.isdigit() for c in word) for word in words) and all(len(word)>=2 for word in words) and len(segment)<=150:
-                person_candidates[clean_name(segment)]=' '.join(segment.replace('_',' ').split())
+            if re.search(r'trabajador|personal|colaborador',clean_name(segment)):
+                workforce_seen=True
+            # A one-letter final initial is valid; category folders are not people.
+            if workforce_seen and 2<=len(words)<=7 and not any(word in excluded or any(c.isdigit() for c in word) for word in words) and all(len(word)>=2 for word in words[:2]) and len(segment)<=150:
+                person_parts.append((clean_name(segment),' '.join(segment.replace('_',' ').split())))
+        hierarchy_warning=None
+        if person_parts:
+            root_key,root_name=person_parts[0]
+            person_candidates[root_key]=root_name
+            aliases=sorted({name for key,name in person_parts[1:] if key!=root_key})
+            if aliases:
+                hierarchy_warning=f'Carpeta principal: {root_name}. Subcarpetas con otro nombre: '+', '.join(aliases)+'. Confirma que sus documentos pertenecen a la persona de la carpeta principal; el nombre de carpeta no verifica identidad.'
+            # Never silently combine an existing different identity or an inactive root.
+            descendant_keys={key for key,_ in person_parts[1:] if key!=root_key}
+            conflicting_workers=[w for w in workers if clean_name(w.full_name) in descendant_keys]
+            matched_workers=[w for w in workers if clean_name(w.full_name)==root_key]
+        else:
+            conflicting_workers=[]
         company=bool(re.search(r'\bempresa\b|\bcompany\b',normalized))
         worker=bool(re.search(r'trabajador|personal|colaborador',normalized))
-        if len(matched_workers)==1 and matched_workers[0].active and not matched and not company and len(matched_projects)<=1:
+        if conflicting_workers:
+            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Una subcarpeta corresponde a otra persona ya registrada. Se requiere separar sus documentos antes de asignarlos.'}
+        elif len(matched_workers)==1 and matched_workers[0].active and not matched and not company and len(matched_projects)<=1:
             result={'path':path,'status':'resolved','subject_kind':'worker','worker_id':matched_workers[0].id,'vehicle_id':None,'project_id':matched_projects[0].id if matched_projects else None,'subject_name':matched_workers[0].full_name}
         elif len(matched_projects)==1 and not matched and not matched_workers and not company and not worker:
             result={'path':path,'status':'resolved','subject_kind':'project','project_id':matched_projects[0].id,'worker_id':None,'vehicle_id':None,'subject_name':matched_projects[0].name}
@@ -602,6 +622,7 @@ def destination_proposals(paths,user,db):
             result={'path':path,'status':'worker_missing','subject_kind':None,'vehicle_id':None,'proposed_worker_name':person_name,'proposed_worker_key':person_key,'reason':'Ficha operacional propuesta desde la carpeta; requiere confirmar identidad. No crea usuario ni acredita.'}
         else:
             result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Destino ambiguo, patente inactiva o sin identidad reconocible. Revisa la carpeta; no se asigna por aproximación.'}
+        if hierarchy_warning and result['status']!='review':result['hierarchy_warning']=hierarchy_warning
         results.append(result)
     return {'items':results,'note':'La detección usa empresa explícita, patentes o nombres completos de trabajadores y proyectos registrados. Las coincidencias ambiguas requieren revisión.'}
 

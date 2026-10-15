@@ -6,7 +6,8 @@ runtime_env="${PAGDOC_RUNTIME_ENV:-$HOME/.config/pagdoc-private/runtime.env}"
 compose=(sudo docker compose --project-name pagdoc-private --env-file "$runtime_env" -f "$local_dir/compose.local.yml")
 remote_env="${PAGDOC_REMOTE_ENV:-$(dirname -- "$runtime_env")/remote.env}"
 if [[ -f "$remote_env" && "$task" != remote-disable ]]; then
-  python3 "$local_dir/remote_access.py" check-config
+  PAGDOC_NETBIRD_IP="$(python3 "$local_dir/remote_access.py" check-config)"
+  export PAGDOC_NETBIRD_IP
   compose+=(--env-file "$remote_env" -f "$local_dir/compose.remote.yml")
 fi
 case "$task" in

@@ -64,7 +64,7 @@ def verify(path,runtime):
     if live_ip()!=address:raise ValueError('Cambió la IP privada. Ejecuta remote-enable para actualizarla.')
     base=Path(__file__).resolve().parent
     command=['sudo','docker','compose','--project-name','pagdoc-private','--env-file',str(runtime),'--env-file',str(path),'-f',str(base/'compose.local.yml'),'-f',str(base/'compose.remote.yml')]
-    certificate=subprocess.run(command+['exec','-T','proxy','cat','/data/caddy/pki/authorities/local/root.crt'],capture_output=True,text=True,check=True,timeout=20).stdout
+    certificate=subprocess.run(command+['exec','-T','proxy','cat','/data/caddy/pki/authorities/local/root.crt'],capture_output=True,text=True,check=True,timeout=20,env={**os.environ,'PAGDOC_NETBIRD_IP':address}).stdout
     if len(certificate)>65536 or 'PRIVATE KEY' in certificate:raise ValueError('Respuesta de certificado inesperada.')
     context=ssl.create_default_context(cadata=certificate)
     opener=build_opener(ProxyHandler({}),HTTPSHandler(context=context))
@@ -91,7 +91,7 @@ def main():
     task=sys.argv[1]
     runtime=Path(os.environ.get('PAGDOC_RUNTIME_ENV',str(Path.home()/'.config/pagdoc-private/runtime.env'))).expanduser()
     path=Path(os.environ.get('PAGDOC_REMOTE_ENV',str(runtime.parent/'remote.env'))).expanduser()
-    if task=='check-config':check_file(path)
+    if task=='check-config':print(check_file(path))
     elif task=='enable':enable(path,live_ip());print('Configuración privada preparada; se conservará el acceso local.')
     elif task=='check-live':
         if check_file(path)!=live_ip():raise ValueError('La dirección de NetBird cambió. Ejecuta remote-enable.')

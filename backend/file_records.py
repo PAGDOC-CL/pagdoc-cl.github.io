@@ -1,9 +1,8 @@
 """Database-backed encrypted document file version registry for PAGDOC.
 
-This service is intentionally not exposed by HTTP yet. It combines the fail-closed
-scan/storage gateway with tenant-scoped metadata, document-level serialization and
-audit events. A production HTTP layer must not be enabled until a real malware
-scanner and private object store are configured.
+The private HTTP adapter combines this service with explicit company/vehicle
+bindings and upload version guards. It maintains tenant-scoped metadata,
+document-level serialization and audit events after a clean scan.
 """
 from __future__ import annotations
 

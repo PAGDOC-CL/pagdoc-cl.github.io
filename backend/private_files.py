@@ -36,7 +36,7 @@ def self_test() -> None:
         assert gateway.scanner.scan(eicar, 'application/octet-stream').clean is False
     finally:
         gateway.store.delete(1, result.stored.object_key)
-    print('OK: real antimalware clean/reject checks and encrypted private storage round trip. Fictitious object removed. HTTP uploads remain disabled.')
+    print('OK: real antimalware clean/reject checks and encrypted private storage round trip. Fictitious object removed. HTTP uploads require explicit private enablement.')
 
 
 if __name__ == '__main__':

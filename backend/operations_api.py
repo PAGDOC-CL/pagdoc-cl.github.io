@@ -387,6 +387,11 @@ def review(document_id:int,data:ReviewIn,user:core.Auth,_:core.Csrf,db:core.Db):
     cap='documents.review' if data.state in {'approved','observed','rejected'} else 'documents.write'
     if cap not in capabilities(user.role) and 'documents.review' not in capabilities(user.role):raise HTTPException(403,'Insufficient review permissions')
     doc=owned(db,core.Document,user.tenant_id,document_id,True);state,version,_reason=review_state(db,doc)
+    if data.state=='approved':
+        binding_table=core.Base.metadata.tables.get('file_document_subjects')
+        binding=db.execute(select(binding_table).where(binding_table.c.document_id==doc.id,binding_table.c.tenant_id==user.tenant_id)).first() if binding_table is not None else None
+        if binding is not None and not db.scalar(select(DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,DocumentFileVersion.document_id==doc.id).limit(1)):
+            raise HTTPException(409,'Adjunta un archivo analizado antes de aprobar este documento.')
     transitions={'pending':{'received'},'received':{'in_review'},'in_review':{'approved','observed','rejected'},'observed':{'received'},'rejected':{'received'},'approved':{'in_review'}}
     if version!=data.expected_version:raise HTTPException(409,'Document review changed; refresh')
     if data.state not in transitions[state]:raise HTTPException(409,'Invalid review transition')

@@ -1,8 +1,8 @@
 """Fail-closed document ingestion gateway for PAGDOC.
 
-The gateway is intentionally not exposed as an HTTP endpoint. A file is written
-to encrypted storage only after payload validation and an injected malware scanner
-returns a clean verdict. Production must provide a real scanner implementation.
+The private HTTP adapter uses this service. A file is written to encrypted storage
+only after payload validation and a scanner returns a clean verdict. The private
+runtime uses ClamAV; fake scanners are restricted to automated test fixtures.
 """
 from __future__ import annotations
 

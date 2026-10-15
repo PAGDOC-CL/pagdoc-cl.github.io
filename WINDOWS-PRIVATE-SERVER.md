@@ -140,7 +140,30 @@ python3 deployment/local/backup.py verify "/mnt/c/Users/TU_USUARIO/PAGDOC_Respal
 
 La comprobación nunca restaura sobre el servidor activo. Una recuperación de producción se debe preparar en una instancia privada separada y verificar antes de cambiar el servicio. Este asistente no programa tareas automáticas ni envía copias a SharePoint.
 
-## Referencias
+## Habilitar archivos privados de empresa y vehículos
+
+Después de comprobar el antivirus, el almacenamiento y el respaldo, actualiza el código y reconstruye la API. La migración `0010_file_subjects` agrega una tabla de vínculos; conserva los documentos, usuarios y archivos existentes.
+
+```bash
+cd "$HOME/pagdoc-private" &&
+git pull --ff-only &&
+bash deployment/local/control.sh start &&
+bash deployment/local/control.sh files-enable
+```
+
+`files-enable` comprueba otra vez ClamAV y el almacenamiento, habilita la función en el archivo privado de configuración sin cambiar claves, y reinicia la API con esa opción. La función está deshabilitada de manera predeterminada. Si el antivirus no completa un análisis limpio con firmas vigentes, el archivo no se guarda.
+
+En `https://localhost:8443/app`, recarga con Ctrl+F5 y abre **Empresa y vehículos**. Registra o selecciona el vehículo cuando corresponda, registra el documento y adjunta su archivo. Se admiten PDF, PNG, JPEG, DOCX y XLSX de hasta 15 MiB; no macros, archivos cifrados ni paquetes Word/Excel con contenido activo o expansión excesiva. Esta sección no acepta ZIP como carga masiva. La importación por lotes y SharePoint siguen pendientes.
+
+Administradores y editores pueden registrar y adjuntar; revisores y visores con permiso documental pueden consultar versiones y descargar. Los planificadores no tienen acceso documental. Cada operación comprueba empresa y sesión; las escrituras exigen CSRF. Las patentes existentes no se fusionan automáticamente.
+
+Cada archivo se guarda como una nueva versión cifrada después del análisis. Una carga con una versión esperada antigua devuelve conflicto sin sobrescribir datos. Las versiones previas se conservan. Cada descarga requiere autenticación, se audita, comprueba tamaño y hash, y se entrega como adjunto sin caché. La interfaz no publica rutas del almacenamiento ni enlaces públicos con credenciales.
+
+Los documentos comienzan pendientes. Cambiar el archivo invalida la aprobación previa, y un documento de este módulo sin archivo no puede aprobarse. Las fechas se registran desde evidencia verificada: no se asigna un año de vigencia automáticamente. La aprobación, la fecha y el cierre de servicio siguen siendo controles separados.
+
+Primero comprueba el flujo con un documento ficticio en el equipo final. Al incorporar documentos reales, conserva sus fuentes y crea después un nuevo respaldo cifrado: la copia anterior no incluye los archivos añadidos posteriormente. Esto no declara completadas MFA, la conexión corporativa SharePoint, el arranque automático ni el acceso desde otros equipos.
+
+### Referencias técnicas
 
 - [Docker Engine en Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
 - [Aplicaciones WSL desde Windows](https://learn.microsoft.com/en-us/windows/wsl/networking).

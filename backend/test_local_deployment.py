@@ -37,3 +37,15 @@ def test_shared_directory_is_rejected(tmp_path):
     folder=tmp_path/'shared';folder.mkdir(mode=0o755)
     with pytest.raises(ValueError):module.create_config(folder/'runtime.env')
     assert not (folder/'runtime.env').exists()
+
+
+def test_enabling_files_preserves_existing_private_keys(tmp_path):
+    spec=importlib.util.spec_from_file_location('enable_private_files',path.with_name('enable_files.py'))
+    feature=importlib.util.module_from_spec(spec);spec.loader.exec_module(feature)
+    target=tmp_path/'private/runtime.env';module.create_config(target)
+    original=target.read_text()
+    feature.enable(target)
+    assert target.read_text()==original+'PAGDOC_BINARY_HTTP_ENABLED=1\n'
+    assert target.stat().st_mode & 0o777==0o600
+    feature.enable(target)
+    assert target.read_text()==original+'PAGDOC_BINARY_HTTP_ENABLED=1\n'

@@ -1,15 +1,13 @@
-"""Encrypted document storage prototype for PAGDOC.
-
-This component is deliberately NOT wired to the public API. It is intended for
-local/CI validation with fictitious files until private object storage and an
-antimalware scanner are available.
-"""
+"""Encrypted private storage with bounded type validation, isolated from public Pages."""
 from __future__ import annotations
 
 import hashlib
 import os
 import re
 import uuid
+import io
+import stat
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +26,13 @@ EXTENSIONS = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
 }
+OFFICE_TYPES = {
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ('word/document.xml', '.docx'),
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ('xl/workbook.xml', '.xlsx'),
+}
+for _media, (_part, _extension) in OFFICE_TYPES.items():
+    SIGNATURES[_media] = (b'PK\x03\x04',)
+    EXTENSIONS[_media] = _extension
 
 
 class StorageError(ValueError):
@@ -63,6 +68,36 @@ def validate_payload(data: bytes, media_type: str) -> None:
     lowered = data[:4096].lower()
     if b"<script" in lowered or b"javascript:" in lowered:
         raise StorageError("Active content marker rejected")
+    if media_type in OFFICE_TYPES:
+        validate_office(data, media_type)
+
+
+def validate_office(data: bytes, media_type: str) -> None:
+    """Bound expansion; reject encrypted packages, macros and embedded active content."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            names = {entry.filename for entry in entries}
+            required = {'[Content_Types].xml', '_rels/.rels', OFFICE_TYPES[media_type][0]}
+            if len(entries) > 2000 or len(names) != len(entries) or not required <= names:
+                raise StorageError('Invalid Word/Excel package')
+            if sum(e.file_size for e in entries) > 64 * 1024 * 1024:
+                raise StorageError('Word/Excel expansion exceeds limit')
+            for entry in entries:
+                name = entry.filename.replace('\\', '/').lower()
+                parts = name.split('/')
+                if name.startswith('/') or '..' in parts or entry.flag_bits & 1 or stat.S_ISLNK(entry.external_attr >> 16):
+                    raise StorageError('Unsafe Word/Excel package')
+                if entry.file_size > 32 * 1024 * 1024 or entry.file_size > max(entry.compress_size, 1) * 200:
+                    raise StorageError('Word/Excel compression limit exceeded')
+                if any(p in {'embeddings', 'activex'} for p in parts) or 'vbaproject' in name or name.endswith(('.exe','.dll','.js','.vbs','.ps1','.docm','.xlsm')):
+                    raise StorageError('Macros or embedded active content are not accepted')
+                if not entry.is_dir():
+                    body = archive.read(entry)  # CRC and encrypted-member validation.
+                    if name.endswith(('.xml', '.rels')) and (b'<!doctype' in body.lower() or b'<!entity' in body.lower() or b'macroenabled' in body.lower()):
+                        raise StorageError('Unsafe XML or macro-enabled content')
+    except (zipfile.BadZipFile, RuntimeError, OSError, NotImplementedError) as exc:
+        raise StorageError('Invalid Word/Excel package') from exc
 
 
 class EncryptedLocalStore:

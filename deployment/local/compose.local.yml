@@ -25,6 +25,7 @@ services:
       PAGDOC_PUBLIC_ORIGIN: https://localhost:8443
       PAGDOC_STORAGE_ROOT: /var/lib/pagdoc-files
       PAGDOC_CLAMAV_HOST: antimalware
+      PAGDOC_BINARY_HTTP_ENABLED: ${PAGDOC_BINARY_HTTP_ENABLED:-0}
     volumes: [file_objects:/var/lib/pagdoc-files]
     command: [sh, -c, 'python -m alembic upgrade head && exec uvicorn server:app --host 0.0.0.0 --port 8000 --no-access-log']
     depends_on:

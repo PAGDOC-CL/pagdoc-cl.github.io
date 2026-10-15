@@ -187,7 +187,7 @@ async function binaryRequest(path,method='GET',file){
  if(!response.ok){if(response.status===401)showLogin();let body;try{body=await response.json();}catch{}const error=Error(typeof body?.detail==='string'?body.detail:'No se pudo completar la operación con el archivo.');error.status=response.status;throw error;}
  return response;
 }
-function fileMediaType(file){const extension=file.name.split('.').pop().toLowerCase();const types={pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};if(!types[extension])fail('Usa PDF, PNG, JPEG, DOCX o XLSX.',422);return types[extension];}
+function fileMediaType(file){const extension=file.name.split('.').pop().toLowerCase();const types={pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};if(!types[extension])fail('No se admite «'+file.name+'» ('+(extension?'.'+extension:'sin extensión')+'). Usa PDF, PNG, JPEG, DOCX o XLSX.',422);return types[extension];}
 async function handleFileAction(name,id,version){
  if(!privateMode)fail('Ingresa al servidor privado para gestionar archivos.',403);
  if(name==='file-destination-home'){fileDestination='';fileFolder='';fileFilter='all';fileBrowse=true;fileOffset=0;await render();return;}
@@ -203,6 +203,7 @@ async function handleFileAction(name,id,version){
   batchFiles=[];batchVehicleMap=new Map();
   const form=$('edit-form');form.elements.subject_kind.addEventListener('change',renderBatchSelection);form.elements.vehicle_id.addEventListener('change',renderBatchSelection);
   for(const name of ['upload_files','upload_folders'])form.elements[name].addEventListener('change',e=>{try{addBatchFiles([...e.target.files]);$('form-error').textContent='';}catch(error){$('form-error').textContent=error.message;}e.target.value='';});
+  $('batch-warning').onclick=event=>{if(busy||batchLocked||!event.target.closest('[data-batch-remove-invalid]'))return;const rejected=batchFiles.filter(entry=>fileSelectionIssue(entry.file));batchFiles=batchFiles.filter(entry=>!fileSelectionIssue(entry.file));renderBatchSelection();$('form-error').textContent='';$('batch-warning').textContent=`Se apartaron ${rejected.length} archivos de esta selección. Conserva sus originales para corregirlos; no se han subido ni borrado archivos con esta acción. Revisa los ${batchFiles.length} restantes y pulsa Guardar para continuar.`;};
   $('batch-clear').onclick=()=>{batchFiles=[];batchVehicleMap.clear();renderBatchSelection();};
   $('batch-preview').addEventListener('click',e=>{const button=e.target.closest('[data-batch-remove]');if(button&&!batchLocked){batchFiles.splice(+button.dataset.batchRemove,1);renderBatchSelection();}});
   $('batch-preview').addEventListener('change',e=>{if(e.target.matches('[data-batch-group]')){batchVehicleMap.set(batchGroups()[+e.target.dataset.batchGroup],+e.target.value);renderBatchSelection();}});
@@ -237,6 +238,14 @@ async function handleFileAction(name,id,version){
   const response=await binaryRequest(`/ops/files/documents/${+id}/versions/${+version}/download`);const blob=await response.blob();const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=row.original_name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
  }
 }
+function fileSelectionIssue(file){
+ if(file.name.startsWith('~$'))return 'Archivo temporal de Office; selecciona el documento original.';
+ try{fileMediaType(file);}catch(error){return error.message;}
+ if(!file.size)return 'El archivo está vacío.';
+ if(file.size>50*1048576)return 'Supera 50 MiB por archivo.';
+ if(file.name.length>160)return 'El nombre del archivo supera 160 caracteres.';
+ return '';
+}
 function batchGroups(){return [...new Set(batchFiles.map(entry=>entry.group))];}
 function addBatchFiles(files){
  if(batchLocked)fail('Cierra el lote finalizado antes de elegir más archivos.',409);
@@ -261,8 +270,9 @@ async function saveBatchFiles(p){
  const vehicleFor=entry=>groups.length>1?batchVehicleMap.get(entry.group):p.vehicle_id;
  if(p.subject_kind==='vehicle')for(const entry of entries)if(!data.fileSubjects.vehicles.some(v=>v.id===vehicleFor(entry)))fail('Selecciona un vehículo válido para cada carpeta: '+entry.group,422);
  if(p.subject_kind!=='auto'&&!form.elements.confirm_destination.checked)fail('Confirma el destino de los archivos.',422);
- let total=0;
- for(const {file} of entries){fileMediaType(file);if(!file.size||file.size>50*1048576)fail('Cada archivo debe tener contenido y no superar 50 MiB: '+file.name,422);if(file.name.length>160)fail('Acorta el nombre a 160 caracteres: '+file.name,422);total+=file.size;}
+ const invalid=entries.map(entry=>({...entry,issue:fileSelectionIssue(entry.file)})).filter(entry=>entry.issue);
+ if(invalid.length){$('batch-warning').innerHTML=`<div class="banner"><b>${invalid.length} archivos requieren corrección antes de cargar.</b><ul class="batch-list">${invalid.map(entry=>`<li><b>${esc(entry.path)}</b><br>${esc(entry.issue)}</li>`).join('')}</ul><p>Los demás archivos permanecen seleccionados. Puedes corregir estos originales o apartarlos de este lote. Ningún archivo de este intento se ha enviado.</p><button type="button" class="secondary" data-batch-remove-invalid>Apartar ${invalid.length} archivos de esta selección</button></div>`;fail(invalid.length+' archivos requieren corrección. '+invalid[0].issue+' Revisa el detalle de archivos antes de continuar.',422);}
+
  if(!batchPlan){
   $('save').textContent='Comprobando archivos existentes…';
   let detected=null;if(p.subject_kind==='auto'){detected=[];for(let offset=0;offset<entries.length;offset+=250){$('save').textContent=`Detectando destinos ${offset+1}–${Math.min(offset+250,entries.length)} de ${entries.length}…`;detected.push(...(await request('/ops/files/batch/destinations','POST',{paths:entries.slice(offset,offset+250).map(entry=>entry.path)})).items);}if(detected.length!==entries.length||detected.some((item,index)=>item.path!==entries[index].path))fail('La detección no corresponde a la selección actual.',409);const unresolved=detected.filter(item=>!['resolved','vehicle_missing'].includes(item.status));if(unresolved.length){const folders=[...new Set(unresolved.map(item=>item.path.slice(0,item.path.lastIndexOf('/'))))];fail('Revisa '+folders.length+' carpetas con destino ambiguo o inactivo: '+folders.slice(0,10).join('; ')+'. No se ha cargado ningún archivo de este lote.',422);}

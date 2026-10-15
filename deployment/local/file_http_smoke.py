@@ -107,3 +107,32 @@ with request('/ops/email-alerts') as response:
     assert pref['recipient']=='backup-admin@example.invalid' and pref['delivery_configured'] is False
 with request('/ops/email-alerts/preview') as response:assert json.load(response)['delivery_configured'] is False
 print('OK: folder destinations, identical detection, confirmed replacement, preserved history and private email preview without delivery.')
+
+# A valid fictitious PDF exercises the actual raster renderer and analysis worker.
+def readable_pdf():
+    stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'
+    objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
+    body=b'%PDF-1.4\n';offsets=[]
+    for i,obj in enumerate(objects,1):offsets.append(len(body));body+=f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+    start=len(body);body+=f'xref\n0 {len(objects)+1}\n0000000000 65535 f \n'.encode()
+    for offset in offsets:body+=f'{offset:010} 00000 n \n'.encode()
+    return body+f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF'.encode()
+with request('/ops/files/documents',{'title':'Fictitious readable PDF','subject_kind':'company'}) as response:preview_id=json.load(response)['id']
+with request(f'/ops/files/documents/{preview_id}/versions?file_name=fictitious-readable.pdf&expected_version=0',readable_pdf(),'application/pdf') as response:assert json.load(response)['version']==1
+preview_path=f'/ops/files/documents/{preview_id}/versions/1/preview'
+with request(preview_path) as response:assert json.load(response)['kind']=='pdf'
+with request(preview_path+'/page?page=1') as response:
+    assert response.read().startswith(b'\x89PNG') and response.headers['Cache-Control']=='no-store'
+    assert response.headers['Content-Disposition']=='inline'
+try:
+    urlopen(origin+preview_path,context=context,timeout=15)
+    raise AssertionError('Preview exposed without authentication')
+except HTTPError as error:assert error.code==401
+import time
+for attempt in range(45):
+    with request(f'/ops/files/documents/{preview_id}/analysis') as response:analysis=json.load(response)
+    if analysis['status'] not in {'pending','processing'}:break
+    time.sleep(1)
+assert analysis['status']=='ready',analysis
+assert analysis['expires_on']=='2027-10-15'
+print('OK: real private PDF raster preview and background extraction with destination identity, applied expiry and no automatic accreditation.')

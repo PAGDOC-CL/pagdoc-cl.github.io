@@ -80,20 +80,20 @@
     "nav": "Empresa y vehículos",
     "slides": [
       [
-        "Define el destino",
-        "Selecciona Empresa o asigna explícitamente el vehículo correcto."
+        "Añade la carpeta principal",
+        "Cargar carpeta automática conserva subcarpetas y detecta destinos registrados."
       ],
       [
-        "Añade archivos o carpetas",
-        "Añadir carpeta y subcarpetas acumula las rutas seleccionadas."
+        "Comprueba destinos y reemplazos",
+        "Confirma las rutas detectadas. Los idénticos se omiten y el historial se conserva."
       ],
       [
-        "Revisa las coincidencias",
-        "Confirma los reemplazos advertidos. Los idénticos se omiten."
+        "Espera el análisis privado",
+        "Se leen tipos y fechas. OCR o fechas dudosas quedan pendientes en amarillo."
       ],
       [
-        "Verifica el resultado",
-        "La nueva versión conserva el historial y requiere revisión."
+        "Revisa antes de acreditar",
+        "Abre Vista previa y Fechas y semáforo. Confirma solo lo verificado en el original."
       ]
     ]
   },
@@ -102,16 +102,16 @@
     "nav": "Empresa y vehículos",
     "slides": [
       [
-        "Localiza el documento",
-        "Filtra por empresa o vehículo y revisa su estado."
+        "Localiza la carpeta y el destino",
+        "Filtra empresa, vehículos, trabajadores o proyectos y sus subcarpetas."
       ],
       [
-        "Consulta el historial",
-        "Las versiones permiten identificar cada archivo cargado."
+        "Abre la vista previa",
+        "Consulta páginas PDF, imágenes o texto de Word y Excel antes de descargar."
       ],
       [
-        "Descarga con sesión",
-        "Tu perfil permite consultar; la carga depende de otros permisos."
+        "Comprueba fechas y semáforo",
+        "Amarillo requiere atención. Vigencia documental no equivale a acreditación."
       ]
     ]
   },

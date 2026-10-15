@@ -62,6 +62,23 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+  analysis:
+    extends:
+      service: api
+    profiles: [files]
+    command: [python, analysis_worker.py]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 32
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "from pathlib import Path; import time; p=Path('/tmp/pagdoc-analysis-heartbeat'); assert p.exists() and time.time()-p.stat().st_mtime < 300"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
   antimalware:
     image: clamav/clamav:1.4
     profiles: [files]

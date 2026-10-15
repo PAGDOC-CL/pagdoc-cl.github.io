@@ -1,0 +1,158 @@
+from test_file_api import files,create,upload
+from test_operations_api import client,login
+from datetime import date,timedelta
+import io,json,zipfile
+from pathlib import Path
+import pytest
+from sqlalchemy import select
+import app as core
+import file_api
+import document_analysis as analysis
+from document_tools import extract,office_text,pdf_pages,raster_pdf
+
+
+def pdf_document():
+    stream=b'BT /F1 20 Tf 60 740 Td (Certificado ficticio - Demo One) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'
+    objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
+    result=b'%PDF-1.4\n';offsets=[0]
+    for i,obj in enumerate(objects,1):offsets.append(len(result));result+=f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+    start=len(result);result+=f'xref\n0 {len(offsets)}\n0000000000 65535 f \n'.encode()
+    for offset in offsets[1:]:result+=f'{offset:010} 00000 n \n'.encode()
+    return result+f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF'.encode()
+
+
+def word_document(text='Certificado ficticio. Fecha de emisión: 15/10/2026. Fecha de vencimiento: 15/10/2027'):
+    from xml.sax.saxutils import escape
+    output=io.BytesIO()
+    with zipfile.ZipFile(output,'w') as archive:
+        archive.writestr('[Content_Types].xml','<Types/>');archive.writestr('_rels/.rels','<Relationships/>')
+        archive.writestr('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>'+escape(text)+'</w:t></w:r></w:p></w:body></w:document>')
+    return output.getvalue()
+
+
+@pytest.mark.parametrize('text,expected,ready',[
+ ('Certificado. Fecha de vencimiento: 15/10/2027','2027-10-15',True),
+ ('Certificado. Valido hasta: 2027-10-15','2027-10-15',True),
+ ('Certificado. Fecha de vencimiento: 15 de octubre de 2027','2027-10-15',True),
+ ('Certificado. Emisión 15/10/2026',None,False),
+ ('Certificado. Vencimiento: 31/02/2027',None,False),
+ ('Certificado. Vencimiento: 15/10/2027. Vencimiento: 20/10/2027',None,False),
+ ('Certificado. Fecha de emisión: 20/10/2027. Vencimiento: 15/10/2027','2027-10-15',False),
+ ('Certificado. Fecha de emisión: 15/10/2026. Vigencia: 30 dias','2026-11-14',False),
+ ('Documento con fecha 15/10/2027 sin etiqueta',None,False),
+])
+def test_only_unambiguous_labelled_dates_are_automatic(text,expected,ready):
+    result=analysis.interpret(text,today=date(2026,10,15))
+    assert result['expires_on']==expected
+    assert result['safe_to_apply'] is ready
+    assert not analysis.interpret(text,method='ocr',today=date(2026,10,15))['safe_to_apply']
+
+
+def test_real_pdf_render_text_and_ocr_are_bounded_and_offline(tmp_path):
+    payload=pdf_document();path=tmp_path/'fictitious.pdf';path.write_bytes(payload)
+    assert pdf_pages(path,tmp_path)==1
+    image=raster_pdf(path,1,tmp_path);assert image.startswith(b'\x89PNG')
+    text,notes,method=extract(payload,'application/pdf')
+    assert 'vencimiento' in text and method=='pdf_text' and not notes
+    text,notes,method=extract(image,'image/png')
+    assert method=='ocr' and any('OCR' in note for note in notes)
+    assert 'Certificado' in text.replace(' ','')
+
+
+def test_word_and_excel_dates_are_read_without_executing_formulas():
+    media='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    text,notes=office_text(word_document(),media)
+    assert analysis.interpret(text,notes,today=date(2026,10,15))['safe_to_apply']
+    output=io.BytesIO()
+    with zipfile.ZipFile(output,'w') as archive:
+        archive.writestr('[Content_Types].xml','<Types/>');archive.writestr('_rels/.rels','<Relationships/>')
+        archive.writestr('xl/workbook.xml','<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>')
+        archive.writestr('xl/styles.xml','<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs><xf numFmtId="14"/></cellXfs></styleSheet>')
+        archive.writestr('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c t="inlineStr"><is><t>Certificado Vencimiento:</t></is></c><c s="0"><v>46675</v></c></row><row><c><f>NOW()</f><v>99999</v></c></row></sheetData></worksheet>')
+    text,notes=office_text(output.getvalue(),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    assert '2027-10-15' in text and '99999' not in text
+    assert notes and not analysis.interpret(text,notes)['safe_to_apply']
+
+
+def test_background_analysis_applies_dates_and_replacement_clears_old_validity(files):
+    c,store,scanner=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    with core.SessionLocal() as db:assert analysis.process_next(db)
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='ready' and result['expires_on']=='2027-10-15'
+    assert c.get('/ops/files/documents',params={'document_type':'certificado'}).json()['total']==1
+    assert c.get('/ops/files/documents',params={'document_type':'sin_clasificar'}).json()['total']==0
+    assert c.get('/ops/files/documents',params={'document_type':'invalid'}).status_code==422
+    assert c.get('/ops/files/documents').json()['items'][0]['review_state']=='pending'
+    assert upload(c,identity,version=1,payload=b'%PDF-1.7\n% fictitious unreadable replacement\n%%EOF').status_code==201
+    assert c.get(f'/ops/files/documents/{identity}/analysis').json()['expires_on'] is None
+    assert c.get('/ops/files/documents',params={'document_type':'sin_clasificar'}).json()['total']==1
+    with core.SessionLocal() as db:assert analysis.process_next(db)
+    assert c.get(f'/ops/files/documents/{identity}/analysis').json()['status']=='review'
+    assert c.get(f'/ops/files/documents/{identity}/versions/1/download').content==pdf_document()
+
+
+def test_analysis_confirmation_is_scoped_csrf_protected_and_version_checked(files):
+    c,store,scanner=files;identity=create(c);assert upload(c,identity).status_code==201
+    with core.SessionLocal() as db:analysis.process_next(db,lambda *args:('Certificado Vencimiento: 15/10/2027',['Lectura OCR pendiente'],'ocr'))
+    route=f'/ops/files/documents/{identity}/analysis/confirm';payload={'document_type':'certificado','issued_on':'2026-10-15','expires_on':'2027-10-15','expected_version':1,'reason':'Verificado contra vista previa ficticia'}
+    login(c,2);assert c.post(route,json=payload).status_code==404
+    login(c,5);assert c.post(route,json=payload).status_code==403
+    login(c);del c.headers['X-PAGDOC-CSRF'];assert c.post(route,json=payload).status_code==403
+    login(c);assert c.post(route,json={**payload,'expected_version':2}).status_code==409
+    assert c.post(route,json=payload).json()['status']=='confirmed'
+    assert c.post(route,json=payload).status_code==409
+    assert c.get('/ops/files/documents').json()['items'][0]['review_state']=='pending'
+
+
+def test_preview_is_private_and_does_not_download_the_original(files):
+    c,store,scanner=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    route=f'/ops/files/documents/{identity}/versions/1/preview'
+    assert c.get(route).json()['kind']=='pdf'
+    image=c.get(route+'/page?page=1');assert image.status_code==200 and image.content.startswith(b'\x89PNG')
+    assert image.headers['cache-control']=='no-store' and image.headers['content-disposition']=='inline'
+    assert c.get(route+'/page?page=2').status_code==404
+    login(c,2);assert c.get(route).status_code==404 and c.get(route+'/page').status_code==404
+    login(c,3);assert c.get(route).status_code==403
+    login(c);c.post('/auth/logout');assert c.get(route).status_code==401
+
+
+def test_office_preview_is_text_and_escapable_not_executable(files):
+    c,store,scanner=files;identity=create(c)
+    payload=word_document('Certificado ficticio. <img src=x onerror=alert(1)>')
+    assert upload(c,identity,payload=payload,filename='fictitious.docx',media='application/vnd.openxmlformats-officedocument.wordprocessingml.document').status_code==201
+    data=c.get(f'/ops/files/documents/{identity}/versions/1/preview').json()
+    assert data['kind']=='text' and '<img' in data['text'] and 'formato original' in data['note']
+
+
+def test_folder_destinations_are_exact_scoped_and_support_workers_and_projects(files):
+    c,store,scanner=files
+    paths=['01_ACREDITACION_EMPRESA/Certificados/a.pdf','Vehiculos/TEST11/a.pdf','Trabajadores/Demo Worker/a.pdf','Proyectos/Demo Project/a.pdf','Vehiculos/TEST22/a.pdf','Sin destino/a.pdf']
+    result=c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items']
+    assert [item['subject_kind'] for item in result]==['company','vehicle','worker','project',None,None]
+    for index in [2,3]:
+        item=result[index];entry={key:item.get(key) for key in ['path','subject_kind','vehicle_id','worker_id','project_id']};entry['sha256']='0'*64
+        preview=c.post('/ops/files/batch/preview',json={'entries':[entry]});assert preview.status_code==200,preview.text
+        plan=preview.json()['items'][0]
+        query={key:value for key,value in entry.items() if key!='sha256' and value is not None};query['expected_version']=0
+        saved=c.post('/ops/files/batch/item',params=query,content=pdf_document(),headers={'Content-Type':'application/pdf'})
+        assert saved.status_code==201,saved.text
+    folders=c.get('/ops/files/folders').json()['folders'];assert any(f['path']=='Trabajadores/Demo Worker' for f in folders)
+    assert c.get('/ops/files/documents',params={'path_prefix':'Trabajadores'}).json()['total']==1
+    login(c,2);assert c.get('/ops/files/folders').json()['folders']==[]
+
+
+def test_conflicting_metadata_and_superseded_analysis_are_never_applied(files):
+    c,store,scanner=files;identity=create(c,expires_on='2099-01-01');assert upload(c,identity,payload=pdf_document()).status_code==201
+    with core.SessionLocal() as db:analysis.process_next(db)
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='review' and result['expires_on']=='2099-01-01'
+    assert upload(c,identity,version=1,payload=b'%PDF-1.7\n% fictitious v2\n%%EOF').status_code==201
+    def replaced_during_analysis(*args):
+        assert upload(c,identity,version=2,payload=b'%PDF-1.7\n% fictitious v3\n%%EOF').status_code==201
+        return ('Certificado Vencimiento: 15/10/2027',[],'pdf_text')
+    with core.SessionLocal() as db:analysis.process_next(db,replaced_during_analysis)
+    current=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert current['version']==3 and current['status']=='pending' and current['expires_on'] is None
+    with core.SessionLocal() as db:
+        old=db.scalar(select(analysis.FileAnalysis).join(analysis.DocumentFileVersion,analysis.DocumentFileVersion.id==analysis.FileAnalysis.file_version_id).where(analysis.FileAnalysis.document_id==identity,analysis.DocumentFileVersion.version==2))
+        assert old.status=='superseded'

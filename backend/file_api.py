@@ -27,11 +27,12 @@ from storage import EXTENSIONS, MAX_BYTES, StorageError
 
 class FileSubject(core.Base):
     __tablename__ = 'file_document_subjects'
-    __table_args__ = (CheckConstraint("subject_kind IN ('company','vehicle')", name='ck_file_subject_kind'), CheckConstraint("(subject_kind = 'company' AND vehicle_id IS NULL) OR (subject_kind = 'vehicle' AND vehicle_id IS NOT NULL)", name='ck_file_subject_vehicle'))
+    __table_args__ = (CheckConstraint("subject_kind IN ('company','vehicle','worker','project')", name='ck_file_subject_kind'), CheckConstraint("(subject_kind IN ('company','project') AND vehicle_id IS NULL AND worker_id IS NULL) OR (subject_kind = 'vehicle' AND vehicle_id IS NOT NULL AND worker_id IS NULL) OR (subject_kind = 'worker' AND worker_id IS NOT NULL AND vehicle_id IS NULL)", name='ck_file_subject_vehicle'))
     document_id: Mapped[int] = mapped_column(ForeignKey('documents.id'), primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey('tenants.id'), index=True)
     subject_kind: Mapped[str] = mapped_column(String(20))
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey('vehicles.id'), nullable=True)
+    worker_id: Mapped[int | None] = mapped_column(ForeignKey('workers.id',name='fk_file_subject_worker'), nullable=True)
 
 
 FileRead = Annotated[core.User, Depends(permit('documents.read'))]
@@ -112,14 +113,17 @@ def create_vehicle(data: NewVehicle, user: core.Editor, db: core.Db):
 class NewFileDocument(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     title: str = Field(min_length=2, max_length=200)
-    subject_kind: Literal['company','vehicle']
+    subject_kind: Literal['company','vehicle','worker','project']
     vehicle_id: int | None = Field(default=None, gt=0)
+    worker_id: int | None = Field(default=None, gt=0)
     project_id: int | None = Field(default=None, gt=0)
     expires_on: date | None = None
     @model_validator(mode='after')
     def binding(self):
         if (self.subject_kind == 'vehicle') != (self.vehicle_id is not None):
             raise ValueError('Selecciona un vehículo solo para documentos de vehículo.')
+        if (self.subject_kind=='worker')!=(self.worker_id is not None) or (self.subject_kind=='project' and self.project_id is None):
+            raise ValueError('Asigna explícitamente el trabajador o proyecto.')
         return self
 
 
@@ -132,22 +136,41 @@ def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
         if not vehicle.active:
             raise HTTPException(409, 'El vehículo está inactivo.')
         subject_name = vehicle.plate or vehicle.label
+    if data.worker_id is not None:
+        worker=owned(db,core.Worker,user.tenant_id,data.worker_id)
+        if not worker.active:raise HTTPException(409,'El trabajador está inactivo.')
+        subject_name=worker.full_name
     if data.project_id is not None:
-        owned(db, core.Project, user.tenant_id, data.project_id)
+        project=owned(db, core.Project, user.tenant_id, data.project_id)
+        if not project.active:raise HTTPException(409,'El proyecto está inactivo.')
+        if data.subject_kind=='project':subject_name=project.name
     doc = core.Document(tenant_id=user.tenant_id, title=data.title, subject_type=data.subject_kind, subject_name=subject_name, project_id=data.project_id, expires_on=data.expires_on)
     db.add(doc)
     db.flush()
-    db.add(FileSubject(document_id=doc.id, tenant_id=user.tenant_id, subject_kind=data.subject_kind, vehicle_id=data.vehicle_id))
+    db.add(FileSubject(document_id=doc.id, tenant_id=user.tenant_id, subject_kind=data.subject_kind, vehicle_id=data.vehicle_id,worker_id=data.worker_id))
     core.add_audit(db, user, 'document.private_create', 'document', doc.id)
     db.commit()
     return {'id': doc.id, 'version': 0, 'review_state': 'pending'}
 
 
 @core.app.get('/ops/files/documents')
-def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle'] | None = None):
+def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=200),document_type:str|None=Query(default=None,max_length=40)):
     query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
     if subject_kind:
         query = query.where(FileSubject.subject_kind == subject_kind)
+    if document_type:
+        import json
+        from document_analysis import FileAnalysis,TYPES
+        if document_type not in TYPES:raise HTTPException(422,'Tipo documental no válido.')
+        latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).where(DocumentFileVersion.tenant_id==user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
+        analyses=db.execute(select(FileAnalysis.document_id,FileAnalysis.result_json).join(DocumentFileVersion,DocumentFileVersion.id==FileAnalysis.file_version_id).join(latest,(latest.c.document_id==FileAnalysis.document_id)&(latest.c.v==DocumentFileVersion.version)).where(FileAnalysis.tenant_id==user.tenant_id)).all()
+        matching=[identity for identity,result in analyses if json.loads(result).get('document_type','sin_clasificar')==document_type]
+        condition=core.Document.id.in_(matching)
+        if document_type=='sin_clasificar':condition=or_(condition,~core.Document.id.in_([identity for identity,_ in analyses]))
+        query=query.where(condition)
+    if path_prefix:
+        destination_key(path_prefix.rstrip('/'))
+        query=query.where(core.Document.title.startswith(path_prefix.rstrip('/')+'/',autoescape=True))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.execute(query.order_by(core.Document.id.desc()).offset(offset).limit(limit)).all()
     result = []
@@ -155,16 +178,20 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
         version = latest_version(db, user.tenant_id, doc.id)
         file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == doc.id, DocumentFileVersion.version == version))
         state, _, _ = review_state(db, doc)
-        result.append({'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id, 'expires_on': doc.expires_on, 'expiry_status': core.doc_state(doc), 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
+        from document_analysis import current_analysis,analysis_payload
+        automatic=analysis_payload(current_analysis(db,user,doc.id,version),doc,version)
+        result.append({'analysis':automatic,'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id,'worker_id':link.worker_id,'project_id':doc.project_id, 'expires_on': doc.expires_on, 'expiry_status': core.doc_state(doc), 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
     core.add_audit(db, user, 'document.private_list', 'tenant', user.tenant_id)
     db.commit()
     return {'items': result, 'total': total, 'offset': offset, 'limit': limit}
 
 
 def store_upload(db, user, document_id, expected_version, name, media_type, payload):
-    scoped_document(db, user, document_id, lock=True)
+    doc,_ = scoped_document(db, user, document_id, lock=True)
     if latest_version(db, user.tenant_id, document_id) != expected_version:
         raise HTTPException(409, 'El archivo cambió. Actualiza la lista antes de cargar otra versión.')
+    if expected_version>0:
+        doc.expires_on=None  # A replacement cannot inherit the old file's validity.
     try:
         row = store_new_file_version(db, user, document_id, gateway(), name, media_type, payload)
     except GatewayError as exc:
@@ -380,13 +407,17 @@ def destination_key(path):
 class BatchEntry(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     path: str = Field(min_length=1, max_length=200)
-    subject_kind: Literal['company', 'vehicle']
+    subject_kind: Literal['company', 'vehicle','worker','project']
     vehicle_id: int | None = Field(default=None, gt=0)
+    worker_id: int | None = Field(default=None, gt=0)
+    project_id: int | None = Field(default=None, gt=0)
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
     @model_validator(mode='after')
     def binding(self):
         if (self.subject_kind == 'vehicle') != (self.vehicle_id is not None):
             raise ValueError('Asigna el vehículo correspondiente a este documento.')
+        if (self.subject_kind=='worker')!=(self.worker_id is not None) or (self.subject_kind=='project' and self.project_id is None):
+            raise ValueError('Asigna explícitamente el trabajador o proyecto.')
         return self
 
 
@@ -396,6 +427,14 @@ class BatchPreview(BaseModel):
 
 
 def batch_target(db, user, entry):
+    if entry.project_id is not None:
+        project=owned(db,core.Project,user.tenant_id,entry.project_id)
+        if not project.active:raise HTTPException(409,'El proyecto está inactivo.')
+        if entry.subject_kind=='project':return 'project:'+str(project.id),project.name
+    if entry.worker_id is not None:
+        worker=owned(db,core.Worker,user.tenant_id,entry.worker_id)
+        if not worker.active:raise HTTPException(409,'El trabajador está inactivo.')
+        return 'worker:'+str(worker.id),worker.full_name
     if entry.vehicle_id is not None:
         vehicle = owned(db, core.Vehicle, user.tenant_id, entry.vehicle_id)
         if not vehicle.active:
@@ -410,7 +449,7 @@ def resolve_destination(db, user, entry):
     destination = db.scalar(select(FileDestination).where(FileDestination.tenant_id == user.tenant_id, FileDestination.subject_scope == scope, FileDestination.path_key == key))
     if destination:
         doc, link = scoped_document(db, user, destination.document_id)
-        if link.subject_kind != entry.subject_kind or link.vehicle_id != entry.vehicle_id:
+        if link.subject_kind != entry.subject_kind or link.vehicle_id != entry.vehicle_id or link.worker_id!=entry.worker_id or (entry.project_id is not None and doc.project_id!=entry.project_id):
             raise HTTPException(409, 'El destino del documento requiere revisión administrativa.')
         return doc, destination, name
     # Adopt an old unbound record only on an exact source-path match. A loose
@@ -419,7 +458,8 @@ def resolve_destination(db, user, entry):
     match = core.Document.title == entry.path
     if '/' not in entry.path:
         match = or_(match, DocumentFileVersion.original_name == entry.path)
-    query = select(core.Document).join(FileSubject, FileSubject.document_id == core.Document.id).outerjoin(latest, latest.c.document_id == core.Document.id).outerjoin(DocumentFileVersion, (DocumentFileVersion.document_id == core.Document.id) & (DocumentFileVersion.version == latest.c.number)).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id, FileSubject.subject_kind == entry.subject_kind, FileSubject.vehicle_id == entry.vehicle_id, match, ~core.Document.id.in_(select(FileDestination.document_id))).limit(2)
+    query = select(core.Document).join(FileSubject, FileSubject.document_id == core.Document.id).outerjoin(latest, latest.c.document_id == core.Document.id).outerjoin(DocumentFileVersion, (DocumentFileVersion.document_id == core.Document.id) & (DocumentFileVersion.version == latest.c.number)).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id, FileSubject.subject_kind == entry.subject_kind, FileSubject.vehicle_id == entry.vehicle_id,FileSubject.worker_id==entry.worker_id, match, ~core.Document.id.in_(select(FileDestination.document_id))).limit(2)
+    if entry.project_id is not None:query=query.where(core.Document.project_id==entry.project_id)
     candidates = db.scalars(query).all()
     if len(candidates) > 1:
         raise HTTPException(409, 'Hay varios documentos posibles para «' + entry.path + '». Revisa los registros existentes antes de reemplazar.')
@@ -431,13 +471,13 @@ def destination_plan(db, user, entry):
     version = latest_version(db, user.tenant_id, doc.id) if doc else 0
     file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == doc.id, DocumentFileVersion.version == version)) if version else None
     status = 'identical' if file and file.sha256 == entry.sha256 else 'replace' if version else 'resume' if doc else 'new'
-    return {'path': entry.path, 'subject_kind': entry.subject_kind, 'vehicle_id': entry.vehicle_id, 'subject_name': name, 'document_id': doc.id if doc else None, 'expected_version': version, 'status': status}
+    return {'path': entry.path, 'subject_kind': entry.subject_kind, 'vehicle_id': entry.vehicle_id,'worker_id':entry.worker_id,'project_id':entry.project_id, 'subject_name': name, 'document_id': doc.id if doc else None, 'expected_version': version, 'status': status}
 
 
 @core.app.post('/ops/files/batch/preview')
 def preview_batch(data: BatchPreview, user: core.Editor, db: core.Db):
     require_enabled()
-    keys = [(entry.subject_kind, entry.vehicle_id, destination_key(entry.path)) for entry in data.entries]
+    keys = [(entry.subject_kind, entry.vehicle_id,entry.worker_id,entry.project_id if entry.subject_kind=='project' else None, destination_key(entry.path)) for entry in data.entries]
     if len(set(keys)) != len(keys):
         raise HTTPException(422, 'La carga contiene rutas repetidas para el mismo destino.')
     items = [destination_plan(db, user, entry) for entry in data.entries]
@@ -450,7 +490,7 @@ def store_batch_item(db, user, entry, expected_document_id, expected_version, al
     # Serialize a scoped path before resolving it, without taking the tenant
     # audit lock ahead of document locks used by ordinary attachment uploads.
     if db.get_bind().dialect.name == 'postgresql':
-        identity = f'{user.tenant_id}:{entry.subject_kind}:{entry.vehicle_id}:{destination_key(entry.path)}'
+        identity = f'{user.tenant_id}:{entry.subject_kind}:{entry.vehicle_id}:{entry.worker_id}:{entry.project_id if entry.subject_kind=="project" else None}:{destination_key(entry.path)}'
         key = int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], 'big', signed=True)
         db.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': key})
     doc, destination, name = resolve_destination(db, user, entry)
@@ -466,9 +506,9 @@ def store_batch_item(db, user, entry, expected_document_id, expected_version, al
         if not allow_replace:
             raise HTTPException(409, 'Se necesita confirmar el reemplazo en destino. La versión anterior se conservará en el historial.')
     if doc is None:
-        doc = core.Document(tenant_id=user.tenant_id, title=entry.path, subject_type=entry.subject_kind, subject_name=name)
+        doc = core.Document(tenant_id=user.tenant_id, title=entry.path, subject_type=entry.subject_kind, subject_name=name,project_id=entry.project_id)
         db.add(doc);db.flush()
-        db.add(FileSubject(document_id=doc.id, tenant_id=user.tenant_id, subject_kind=entry.subject_kind, vehicle_id=entry.vehicle_id));db.flush()
+        db.add(FileSubject(document_id=doc.id, tenant_id=user.tenant_id, subject_kind=entry.subject_kind, vehicle_id=entry.vehicle_id,worker_id=entry.worker_id));db.flush()
     if destination is None:
         scope, _ = batch_target(db, user, entry)
         db.add(FileDestination(tenant_id=user.tenant_id, subject_scope=scope, path_key=destination_key(entry.path), source_path=entry.path, document_id=doc.id));db.flush()
@@ -479,10 +519,10 @@ def store_batch_item(db, user, entry, expected_document_id, expected_version, al
 
 
 @core.app.post('/ops/files/batch/item', status_code=201)
-async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, path: str = Query(min_length=1, max_length=200), subject_kind: Literal['company', 'vehicle'] = 'company', vehicle_id: int | None = Query(default=None, gt=0), expected_document_id: int | None = Query(default=None, gt=0), expected_version: int = Query(ge=0), allow_replace: bool = False):
+async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, path: str = Query(min_length=1, max_length=200), subject_kind: Literal['company', 'vehicle','worker','project'] = 'company', vehicle_id: int | None = Query(default=None, gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0), expected_document_id: int | None = Query(default=None, gt=0), expected_version: int = Query(ge=0), allow_replace: bool = False):
     require_enabled()
     try:
-        entry = BatchEntry(path=path, subject_kind=subject_kind, vehicle_id=vehicle_id, sha256='0' * 64)
+        entry = BatchEntry(path=path, subject_kind=subject_kind, vehicle_id=vehicle_id,worker_id=worker_id,project_id=project_id, sha256='0' * 64)
     except ValueError:
         raise HTTPException(422, 'Revisa la empresa o el vehículo asignado al documento.')
     destination_key(entry.path)
@@ -494,3 +534,56 @@ async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, pa
         return await run_in_threadpool(store_batch_item, db, user, entry, expected_document_id, expected_version, allow_replace, media, payload)
     finally:
         _upload_slots.release()
+
+
+class DestinationRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    paths:list[str]=Field(min_length=1,max_length=250)
+
+
+@core.app.post('/ops/files/batch/destinations')
+def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
+    require_enabled()
+    vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==user.tenant_id,core.Vehicle.active==1)).all()
+    workers=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id,core.Worker.active==1)).all()
+    projects=db.scalars(select(core.Project).where(core.Project.tenant_id==user.tenant_id,core.Project.active==1)).all()
+    def clean_name(value):
+        value=unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode().casefold()
+        return ' '.join(re.sub(r'[^a-z0-9]+',' ',value).split())
+    company_name=db.get(core.Tenant,user.tenant_id).name
+    results=[]
+    for path in data.paths:
+        destination_key(path)
+        folders=path.rsplit('/',1)[0] if '/' in path else ''
+        normalized=unicodedata.normalize('NFKD',folders).encode('ascii','ignore').decode().lower().replace('_',' ')
+        tokens=re.findall(r'(?<![a-z0-9])[a-z]{2,4}[ -]?[0-9]{2,4}(?![a-z0-9])',normalized)
+        plates={re.sub(r'[ -]','',token).upper() for token in tokens}
+        matched=[v for v in vehicles if re.sub(r'[ -]','',(v.plate or '').upper()) in plates]
+        segments={re.sub(r'^\d+\s+','',clean_name(part)) for part in folders.split('/')}
+        matched_workers=[w for w in workers if clean_name(w.full_name) in segments]
+        matched_projects=[p for p in projects if clean_name(p.name) in segments]
+        company=bool(re.search(r'\bempresa\b|\bcompany\b',normalized))
+        worker=bool(re.search(r'trabajador|personal|colaborador',normalized))
+        if len(matched_workers)==1 and not matched and not company and len(matched_projects)<=1:
+            result={'path':path,'status':'resolved','subject_kind':'worker','worker_id':matched_workers[0].id,'vehicle_id':None,'project_id':matched_projects[0].id if matched_projects else None,'subject_name':matched_workers[0].full_name}
+        elif len(matched_projects)==1 and not matched and not matched_workers and not company and not worker:
+            result={'path':path,'status':'resolved','subject_kind':'project','project_id':matched_projects[0].id,'worker_id':None,'vehicle_id':None,'subject_name':matched_projects[0].name}
+        elif len(matched)==1 and not company and not worker and not matched_workers and not matched_projects:
+            result={'path':path,'status':'resolved','subject_kind':'vehicle','vehicle_id':matched[0].id,'subject_name':matched[0].plate or matched[0].label}
+        elif company and not matched and not worker and not plates and not matched_workers and not matched_projects:
+            result={'path':path,'status':'resolved','subject_kind':'company','vehicle_id':None,'subject_name':company_name}
+        else:
+            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Destino no inequívoco. No se asigna a otra empresa, trabajador, proyecto o vehículo por aproximación.'}
+        results.append(result)
+    return {'items':results,'note':'La detección usa empresa explícita, patentes o nombres completos de trabajadores y proyectos registrados. Las coincidencias ambiguas requieren revisión.'}
+
+
+@core.app.get('/ops/files/folders')
+def folders(user:FileRead,db:core.Db):
+    names=db.scalars(select(core.Document.title).join(FileSubject,FileSubject.document_id==core.Document.id).where(core.Document.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
+    counts={}
+    for name in names:
+        parts=name.split('/')[:-1]
+        for index in range(1,len(parts)+1):
+            path='/'.join(parts[:index]);counts[path]=counts.get(path,0)+1
+    return {'folders':[{'path':path,'count':counts[path]} for path in sorted(counts)]}

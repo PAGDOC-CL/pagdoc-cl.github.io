@@ -53,8 +53,10 @@ def client(tmp_path,monkeypatch):
 def login(c,id=1):
     r=c.post('/auth/login',json={'email':f'u{id}@example.invalid','password':'test-password-demo'});assert r.status_code==200;c.headers['X-PAGDOC-CSRF']=r.json()['csrf_token']
 
-def service(c,code='DEMO-001',project_id=1):
-    return c.post('/ops/services',json={'project_id':project_id,'code':code,'name':'Demo service','client':'Fictitious Client','location':'Fictitious Place','supervisor':'Demo Supervisor','starts_on':str(date.today()-timedelta(days=5)),'ends_on':str(date.today()+timedelta(days=30))})
+def service(c,code='DEMO-001',project_id=1,service_kind=None):
+    payload={'project_id':project_id,'code':code,'name':'Demo service','client':'Fictitious Client','location':'Fictitious Place','supervisor':'Demo Supervisor','starts_on':str(date.today()-timedelta(days=5)),'ends_on':str(date.today()+timedelta(days=30))}
+    if service_kind is not None:payload['service_kind']=service_kind
+    return c.post('/ops/services',json=payload)
 
 def plan(sid=None,state='terrain',**kw):
     d={'worker_id':1,'service_id':sid,'starts_on':str(date.today()),'ends_on':str(date.today()),'state':state,'reason':'Demo planning'};d.update(kw);return d
@@ -211,3 +213,58 @@ def test_beta_provisioning_rejects_real_email_and_existing_identity(client):
         import pytest
         with pytest.raises(ValueError,match='fictitious'):provision(db,'Fictitious Tenant','user@real-domain.example','test-only-password')
         with pytest.raises(ValueError,match='already exists'):provision(db,'Fictitious Tenant','u1@example.invalid','test-only-password')
+
+
+def test_project_creation_is_scoped_audited_and_available_to_planners(client):
+    login(client,3)
+    created=client.post('/ops/projects',json={'name':'Fictitious New Project'})
+    assert created.status_code==201
+    assert client.post('/ops/projects',json={'name':' fictitious new project '}).status_code==409
+    assert any(p['id']==created.json()['id'] for p in client.get('/ops/bootstrap').json()['projects'])
+    login(client,2)
+    assert all(p['id']!=created.json()['id'] for p in client.get('/ops/bootstrap').json()['projects'])
+    assert client.post('/ops/projects',json={'name':'Fictitious New Project'}).status_code==201
+    login(client,5)
+    assert client.post('/ops/projects',json={'name':'Forbidden Project'}).status_code==403
+    login(client)
+    assert any(row['action']=='project.create' for row in client.get('/audit').json())
+    del client.headers['X-PAGDOC-CSRF']
+    assert client.post('/ops/projects',json={'name':'No CSRF Project'}).status_code==403
+
+
+def test_service_categories_preserve_legacy_defaults_and_reject_unknown_values(client):
+    login(client)
+    legacy=service(client)
+    assert legacy.status_code==201 and legacy.json()['service_kind']=='unclassified'
+    for kind in ['project','emergency','scheduled']:
+        result=service(client,code='FICT-'+kind,service_kind=kind)
+        assert result.status_code==201 and result.json()['service_kind']==kind
+    assert service(client,code='INVALID',service_kind='urgent-bypass').status_code==422
+    login(client,2)
+    assert client.get('/ops/services').json()==[]
+
+
+def test_classification_is_versioned_preserves_assignments_and_enforces_scope(client):
+    login(client)
+    row=service(client).json();sid=row['id']
+    assert client.post('/ops/assignments',json=plan(sid)).status_code==200
+    before=client.get('/ops/assignments',params={'starts_on':str(date.today()),'ends_on':str(date.today())}).json()
+    route=f'/ops/services/{sid}/classification'
+    login(client,2)
+    assert client.patch(route,json={'service_kind':'emergency','expected_version':1}).status_code==404
+    login(client,5)
+    assert client.patch(route,json={'service_kind':'emergency','expected_version':1}).status_code==403
+    login(client,3)
+    updated=client.patch(route,json={'service_kind':'emergency','expected_version':1})
+    assert updated.status_code==200 and updated.json()['version']==2
+    assert updated.json()['project_id']==row['project_id'] and updated.json()['starts_on']==row['starts_on']
+    assert client.get('/ops/assignments',params={'starts_on':str(date.today()),'ends_on':str(date.today())}).json()==before
+    assert client.patch(route,json={'service_kind':'scheduled','expected_version':1}).status_code==409
+    assert client.patch(route,json={'service_kind':'invalid','expected_version':2}).status_code==422
+    del client.headers['X-PAGDOC-CSRF']
+    assert client.patch(route,json={'service_kind':'scheduled','expected_version':2}).status_code==403
+    login(client)
+    assert client.get(f'/ops/services/{sid}/closeout').json()['ready_to_close'] is False
+    with core.SessionLocal() as db:
+        db.get(ops.Service,sid).status='completed';db.commit()
+    assert client.patch(route,json={'service_kind':'scheduled','expected_version':2}).status_code==409

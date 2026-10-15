@@ -12,4 +12,4 @@ def capabilities(role):
 
 
 def planner_path_allowed(path):
-    return path in {'/me','/auth/logout','/auth/logout-all','/auth/mfa/setup','/auth/mfa/confirm','/ops/bootstrap','/ops/dashboard','/ops/integrations','/ops/branding','/ops/branding/logo','/ops/email-alerts','/ops/email-alerts/preview','/ops/onboarding/start'} or path.startswith(('/ops/services','/ops/assignments','/ops/tasks'))
+    return path in {'/me','/auth/logout','/auth/logout-all','/auth/mfa/setup','/auth/mfa/confirm','/ops/bootstrap','/ops/dashboard','/ops/integrations','/ops/branding','/ops/branding/logo','/ops/email-alerts','/ops/email-alerts/preview','/ops/onboarding/start','/ops/projects'} or path.startswith(('/ops/services','/ops/assignments','/ops/tasks'))

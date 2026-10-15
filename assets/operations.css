@@ -18,3 +18,5 @@
 
 /* Tutorial media is confined to the one-time guided dialog. */
 .tutorial-media{margin:16px 0 20px}.tutorial-media video{display:block;width:100%;max-height:46vh;aspect-ratio:16/9;background:#08283e;border-radius:10px}.tutorial-media details{font-size:13px;line-height:1.65;margin:10px 0}.tutorial-media summary{cursor:pointer;font-weight:700}.tutorial-media li{margin:8px 0}
+
+.service-sections{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}.service-kind{display:inline-block;padding:6px 9px;border-radius:6px;font-size:11px;font-weight:800;background:#e5f2ff;color:#185f96;margin-bottom:12px}.service-kind.emergency{background:#ffe6db;color:#973913}.service-kind.project{background:#e6f3ed;color:#1f674b}.service-kind.unclassified{background:#fff1d0;color:#855b08}

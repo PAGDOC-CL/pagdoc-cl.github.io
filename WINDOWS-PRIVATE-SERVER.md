@@ -292,3 +292,21 @@ con reproducción silenciosa en bucle y control para pausar. Con la preferencia
 `prefers-reduced-motion`, se muestra la portada fija hasta pulsar reproducir.
 La reproducción se pausa al entrar en la sesión o al ocultar la pestaña.
 El video no contiene material documental ni fotografías reales de Mufas Chile.
+
+### Proyectos, emergencias y servicios programados
+
+El apartado **Proyectos y servicios** incluye tres selecciones: **Proyectos**,
+**Servicios de emergencia** y **Servicio programado**. Permite crear proyectos,
+filtrar sus servicios y seleccionar la categoría al crear un servicio. Los perfiles
+con permiso de planificación pueden crear y clasificar; los de consulta solo leen.
+
+La migración aditiva `0015_service_kind` conserva los servicios existentes con
+**Pendiente de clasificar**. No deduce categorías desde nombres ni fechas. En
+Proyectos se mantienen visibles todos los servicios vinculados; las otras dos
+selecciones muestran únicamente su categoría. Clasificar conserva proyecto, fechas,
+personal, documentos y requisitos, y registra la acción con control de versión.
+Los servicios cerrados o cancelados no cambian de categoría. Una emergencia no
+omite controles documentales ni permite asignaciones fuera del período.
+
+El tutorial y su video de proyectos y servicios explican las tres selecciones,
+la creación y clasificación; solo emplean datos ficticios.

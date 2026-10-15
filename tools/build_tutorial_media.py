@@ -10,7 +10,7 @@ W,H,FPS=1280,720,12
 FONT='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 BOLD='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 def f(n,bold=False):return ImageFont.truetype(BOLD if bold else FONT,n)
-NAV=['Mi operación','Servicios','Planificador','Empresa y vehículos','Revisión documental','Pendientes','Cierre documental','Usuarios y acceso','Integraciones','Mi seguridad']
+NAV=['Mi operación','Proyectos y servicios','Planificador','Empresa y vehículos','Revisión documental','Pendientes','Cierre documental','Usuarios y acceso','Integraciones','Mi seguridad']
 BLUE='#103652';CYAN='#46d4d2';INK='#16354c';GRAY='#5f7485'
 def wrap(draw,text,font,width):
     lines=[];line=''
@@ -48,9 +48,17 @@ def base(lesson,index):
             label(d,(x+13,y+48),state,13)
     elif nav=='Empresa y vehículos':
         for n,(t,v) in enumerate([('Empresa de ejemplo','Documento de seguridad · Pendiente'),('Vehículo FICT01','Carpeta / inspección.pdf · Versión 2'),('Historial conservado','Versión anterior disponible con sesión')]):card(d,(300,140+n*126,1230,250+n*126),t,v)
-    elif nav=='Servicios':
-        card(d,(300,145,745,410),'SERV-EJEMPLO-01','Proyecto ficticio · Planta Norte\nUbicación y fechas del servicio')
-        card(d,(770,145,1230,410),'SERV-EJEMPLO-02','Proyecto ficticio · Planta Sur\nConsulta su ficha y planificación')
+    elif nav=='Proyectos y servicios':
+        for n,name in enumerate(['Proyectos','Emergencias','Programados']):
+            x=300+n*315
+            d.rounded_rectangle((x,137,x+292,187),8,fill=BLUE if n==(index if index<3 else 0) else 'white',outline='#b4cbd9')
+            label(d,(x+18,151),name,20,'white' if n==(index if index<3 else 0) else INK,True)
+        for n,(title,detail) in enumerate([('Proyecto de ejemplo','2 servicios vinculados'),('Servicio de emergencia','Ubicación · Fechas · Responsable'),('Servicio programado','Planificación de personal')]):
+            card(d,(300,207+n*109,1230,303+n*109),title,detail)
+        if index==3:
+            d.rounded_rectangle((300,207,1230,303),12,fill='#fff1d0',outline='#e0c26d',width=2)
+            label(d,(325,221),'Pendiente de clasificar',26,INK,True)
+            label(d,(325,265),'Revisar categoría sin cambiar asignaciones ni fechas',21,GRAY)
     elif nav=='Revisión documental':
         for n,(t,v) in enumerate([('Archivo y requisitos','Revisar el contenido y su vigencia'),('Evaluación pendiente','Aprobar · Observar · Rechazar'),('Motivo y trazabilidad','La decisión queda registrada')]):card(d,(300,140+n*126,1230,250+n*126),t,v)
     elif nav=='Usuarios y acceso':
@@ -85,7 +93,7 @@ def build(key,lesson):
         for frame in range(frames_per_slide):
             im=background.copy();d=ImageDraw.Draw(im);t=frame/frames_per_slide
             # An animated pointer and focus border guide attention without fake clicks.
-            x=int(340+530*min(t*1.8,1));y=165+index*87
+            x=int(340+530*min(t*1.8,1));y=(250+index*109 if index<3 else 250) if lesson['nav']=='Proyectos y servicios' else 165+index*87
             y=min(y,465)
             pulse=int(5+4*math.sin(t*math.pi))
             d.ellipse((x-15-pulse,y-15-pulse,x+15+pulse,y+15+pulse),outline='#0b9b9c',width=3)

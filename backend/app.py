@@ -14,8 +14,11 @@ from typing import Annotated
 import pyotp
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
+from password_policy import valid_password, MESSAGE
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -149,6 +152,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="PAGDOC Private API Prototype", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_without_secret_inputs(request: Request, error: RequestValidationError):
+    # Validation responses must not echo password/token input values.
+    return JSONResponse(status_code=422, content={'detail':[{'loc':item['loc'],'msg':item['msg'],'type':item['type']} for item in error.errors()]})
 
 
 @app.middleware("http")
@@ -425,6 +434,7 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
     email = data.email.strip().lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "Email already registered")
+    if not valid_password(data.password):raise HTTPException(422,MESSAGE)
     created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1)
     db.add(created)
     db.flush()
@@ -435,9 +445,10 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
 
 @app.post("/users/{user_id}/reset-password")
 def reset_user_password(user_id: int, data: PasswordResetIn, user: AdminWrite, db: Db):
-    target = db.scalar(select(User).where(User.id == user_id, User.tenant_id == user.tenant_id))
+    target = db.scalar(select(User).where(User.id == user_id, User.tenant_id == user.tenant_id).with_for_update())
     if target is None:
         raise HTTPException(404, "User not found")
+    if not valid_password(data.password):raise HTTPException(422,MESSAGE)
     target.password_hash = hasher.hash(data.password)
     revoke_user_sessions(db, target.id)
     add_audit(db, user, "user.password_reset", "user", target.id)

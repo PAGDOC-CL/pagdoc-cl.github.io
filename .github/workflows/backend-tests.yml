@@ -80,7 +80,7 @@ jobs:
       - name: Install private offline document tools
         run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng util-linux
       - name: Run backend regression tests
-        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_retention_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py test_operations_api.py test_private_operations_ui.py test_sharepoint_adapter.py test_clamav_scanner.py test_file_api.py test_email_alerts.py test_onboarding_api.py test_document_processing.py
+        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_retention_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py test_operations_api.py test_private_operations_ui.py test_sharepoint_adapter.py test_clamav_scanner.py test_file_api.py test_email_alerts.py test_password_api.py test_onboarding_api.py test_document_processing.py
       - name: Test authenticated private backup format
         run: python -m pytest -q test_private_backup.py
       - name: Run private server smoke test

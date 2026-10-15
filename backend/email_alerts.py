@@ -111,6 +111,11 @@ def smtp_send(recipient,counts,today):
     message=EmailMessage();message['From']=sender;message['To']=recipient
     message['Subject']='PAGDOC · Alertas de vencimientos y retrasos · '+today.isoformat()
     message.set_content(f"Resumen diario PAGDOC\n\nDocumentos próximos a vencer: {counts['expiring']}\nDocumentos vencidos: {counts['expired']}\nTareas atrasadas: {counts['overdue_tasks']}\n\nIngresa a tu plataforma privada para consultar los detalles. No se adjuntan documentos.\nLas fechas deben estar verificadas en cada registro. Puedes desactivar estos avisos en Mi seguridad.\n")
+    send_message(message,recipient)
+
+
+def send_message(message,recipient):
+    sender=os.environ['PAGDOC_SMTP_FROM'];Address(addr_spec=sender);Address(addr_spec=recipient)
     host=os.environ['PAGDOC_SMTP_HOST'];port=int(os.getenv('PAGDOC_SMTP_PORT','587'));context=ssl.create_default_context()
     connection=smtplib.SMTP_SSL(host,port,timeout=30,context=context) if port==465 else smtplib.SMTP(host,port,timeout=30)
     with connection as smtp:

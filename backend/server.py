@@ -23,6 +23,7 @@ import file_api  # noqa: E402,F401
 import document_analysis  # noqa: E402,F401
 import document_preview  # noqa: E402,F401
 import email_alerts  # noqa: E402,F401
+import password_api  # noqa: E402,F401
 import onboarding_api  # noqa: E402,F401
 import integration_status  # noqa: E402,F401
 import private_ui  # noqa: E402,F401

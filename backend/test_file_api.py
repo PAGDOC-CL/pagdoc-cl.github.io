@@ -173,3 +173,94 @@ def test_office_package_upload_and_download(files,media):
 def test_office_active_or_oversized_content_rejected(extra):
     media=next(iter(OFFICE_TYPES))
     with pytest.raises(StorageError):validate_payload(office(media,extra),media)
+
+
+def upload_logo(c, payload=b'\x89PNG\r\n\x1a\nFictitious logo for automated tests', filename='fictitious.png', media='image/png'):
+    return c.post('/ops/branding/logo', params={'file_name': filename}, content=payload, headers={'Content-Type': media})
+
+
+def test_branding_is_private_encrypted_and_scoped(files):
+    c,store,scanner=files
+    assert c.get('/ops/branding').json()=={'logo_version':0}
+    assert c.get('/ops/branding/logo').status_code==404
+    first=b'\x89PNG\r\n\x1a\nFictitious logo one'
+    assert upload_logo(c,first).json()=={'logo_version':1}
+    response=c.get('/ops/branding/logo');assert response.content==first
+    assert response.headers['content-type']=='image/png'
+    assert response.headers['cache-control']=='no-store'
+    assert c.get('/ops/files/documents').json()['total']==0
+    assert all(p.read_bytes()!=first for p in store.root.rglob('*.bin'))
+    login(c,2)
+    assert c.get('/ops/branding').json()=={'logo_version':0}
+    assert c.get('/ops/branding/logo').status_code==404
+    login(c,3)  # Calendar-only roles can see their own corporate mark, not documents.
+    assert c.get('/ops/branding/logo').content==first
+    assert c.get('/ops/files/documents').status_code==403
+    c.cookies.clear();c.headers.pop('X-PAGDOC-CSRF',None)
+    assert c.get('/ops/branding').status_code==401
+    assert c.get('/ops/branding/logo').status_code==401
+
+
+@pytest.mark.parametrize('role',[3,4,5,6])
+def test_only_administrators_can_change_branding(files,role):
+    c,store,_=files;login(c,role)
+    assert upload_logo(c).status_code==403
+    assert not list(store.root.rglob('*.bin'))
+
+
+def test_branding_rejection_keeps_previous_logo_and_versions(files,monkeypatch):
+    c,store,scanner=files
+    first=b'\x89PNG\r\n\x1a\nFictitious first logo'
+    assert upload_logo(c,first).status_code==201
+    scanner.mode='blocked';assert upload_logo(c).status_code==422
+    assert c.get('/ops/branding/logo').content==first
+    assert c.get('/ops/branding').json()['logo_version']==1
+    scanner.mode='clean';assert upload_logo(c).json()['logo_version']==2
+    assert len(list(store.root.rglob('*.bin')))==2
+    del c.headers['X-PAGDOC-CSRF'];assert upload_logo(c).status_code==403
+    login(c)
+    assert upload_logo(c,b'<svg/>','logo.svg','image/svg+xml').status_code==415
+    assert upload_logo(c,b'\x89PNG\r\n\x1a\n'+b'x'*(2*1024*1024)).status_code==413
+    assert upload_logo(c,b'not a PNG').status_code==422
+    assert c.get('/ops/branding').json()['logo_version']==2
+    monkeypatch.setenv('PAGDOC_BINARY_HTTP_ENABLED','0')
+    assert upload_logo(c).status_code==503
+    assert c.get('/ops/branding/logo').status_code==503
+
+
+def test_first_rejected_logo_rolls_back_metadata(files):
+    c,_,scanner=files;scanner.mode='blocked'
+    assert upload_logo(c).status_code==422
+    with core.SessionLocal() as db:
+        assert db.get(file_api.TenantBranding,1) is None
+        assert db.scalar(select(core.Document).where(core.Document.title=='Logo corporativo')) is None
+
+
+def test_login_logo_publication_is_opt_in_and_can_be_removed(files):
+    c,_,_=files
+    assert upload_logo(c).status_code==201
+    assert c.get('/login/branding').json()=={'logo_version':0}
+    assert c.get('/login/branding/logo').status_code==404
+    payload=b'\x89PNG\r\n\x1a\nFictitious opted-in brand'
+    assert c.post('/ops/branding/logo?file_name=fictitious.png&login_visible=true',content=payload,headers={'Content-Type':'image/png'}).status_code==201
+    c.cookies.clear();c.headers.pop('X-PAGDOC-CSRF',None)
+    response=c.get('/login/branding');assert response.json()=={'name':'Demo One','logo_version':2}
+    assert response.headers['cache-control']=='no-store'
+    assert c.get('/login/branding/logo').content==payload
+    assert c.get('/ops/branding/logo').status_code==401
+    assert c.get('/ops/files/documents').status_code==401
+    login(c)
+    assert upload_logo(c).status_code==201
+    assert c.get('/login/branding').json()=={'logo_version':0}
+    assert c.get('/login/branding/logo').status_code==404
+
+
+def test_login_never_selects_between_two_published_tenants(files):
+    c,_,_=files
+    for user in [1,2]:
+        login(c,user)
+        response=c.post('/ops/branding/logo?file_name=fictitious.png&login_visible=true',content=b'\x89PNG\r\n\x1a\nFictitious brand',headers={'Content-Type':'image/png'})
+        assert response.status_code==201
+    assert c.get('/login/branding').json()=={'logo_version':0}
+    assert c.get('/login/branding/logo').status_code==404
+    assert c.get('/ops/branding').json()['logo_version']==1

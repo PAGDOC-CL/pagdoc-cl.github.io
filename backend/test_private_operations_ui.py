@@ -11,6 +11,9 @@ def test_private_ui_uses_same_origin_assets_and_no_inline_scripts():
     assert "script-src 'self'" in r.headers['content-security-policy'];assert '<script>' not in r.text
     assert c.get('/app/assets/operations.js').status_code==200
     assert c.get('/app/assets/app.py').status_code==404
+    assert "media-src 'self'" in r.headers['content-security-policy']
+    assert 'id="login-film"' in r.text
+    assert '<strong>MUFAS CHILE</strong>' in r.text
 
 def test_private_operations_require_auth_even_with_public_ui():
     c=TestClient(server.app,base_url='https://testserver')

@@ -158,7 +158,9 @@ class Docker:
     def run(self, args, *, stdout=None, stdin=None, timeout=600):
         result = subprocess.run(self.prefix + list(args), stdin=stdin, stdout=stdout or subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
         if result.returncode:
-            raise BackupError('Falló una operación de respaldo en Docker. La base original no se reemplazó.')
+            error = BackupError('Falló una operación de respaldo en Docker. La base original no se reemplazó.')
+            error.diagnostic = result.stderr.decode('utf-8', errors='replace')
+            raise error
         return result.stdout
 
     def compose(self, config: Path, args, **kwargs):
@@ -251,7 +253,7 @@ def create_backup(config: Path, destination: Path, password: str, docker=None) -
             shutil.copyfile(config, folder / 'runtime.env')
             os.chmod(folder / 'runtime.env', 0o600)
         finally:
-            docker.compose(config, ['start', '--wait', '--wait-timeout', '240', 'api', 'proxy'])
+            docker.compose(config, ['start', '--wait', 'api', 'proxy'], timeout=300)
         manifest = {'format': 1, 'created_at': datetime.now(timezone.utc).isoformat(), 'counts': counts, 'sha256': {name: digest(folder / name) for name in PARTS}}
         (folder / 'manifest.json').write_text(json.dumps(manifest))
         with tarfile.open(folder / 'bundle.tar', 'w:') as archive:

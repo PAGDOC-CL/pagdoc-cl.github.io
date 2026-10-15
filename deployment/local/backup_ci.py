@@ -10,7 +10,12 @@ spec.loader.exec_module(module)
 config = Path(sys.argv[1])
 destination = Path(sys.argv[2])
 os.umask(0o077)
-output = module.create_backup(config, destination, 'ci-only-fictitious-backup-passphrase')
+try:
+    output = module.create_backup(config, destination, 'ci-only-fictitious-backup-passphrase')
+except module.BackupError as exc:
+    # CI contains only fictitious records; do not enable this output for real data.
+    print(getattr(exc, 'diagnostic', 'Backup content verification failed'), file=sys.stderr)
+    raise
 assert output.is_file()
 assert output.read_bytes().startswith(module.MAGIC)
 assert not list(destination.glob('*.partial'))

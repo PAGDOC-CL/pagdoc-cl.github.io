@@ -403,3 +403,20 @@ La validación del lote identifica cada archivo no admitido con su ruta y motivo
 borrar los originales ni enviar archivos antes de revisar nuevamente el lote.
 DOC/XLS antiguos y otros tipos no se convierten de forma silenciosa: requieren
 convertir una copia a PDF, DOCX o XLSX conservando el original.
+
+
+Automatizador de fechas (reglas versión 2): alcohol y drogas aplica emisión + 30
+días corridos. Requiere emisión explícita y única; fecha de muestra o realización
+no sustituye automáticamente a emisión. OCR, identidad dudosa y contradicciones
+quedan para revisión. El vencimiento manual de alcohol/drogas también se calcula
+y valida a 30 días. La alerta visual usa 7 días para estos exámenes (30 para otros
+documentos); el día de vencimiento es amarillo y el siguiente, rojo.
+La migración 0019 permite al motor retomar una vez los análisis anteriores. Las
+fechas de emisión ya confirmadas se conservan y su vencimiento de drogas se
+recalcula con auditoría. No modifica binarios ni aprueba acreditaciones. El panel
+muestra cola, documentos analizados y casos para revisión de la empresa.
+
+En cargas de trabajadores también se proponen fichas operacionales por nombre
+completo inequívoco en las carpetas de personal. Se confirman juntas, se reutiliza
+la identidad existente y no se crean cuentas, invitaciones, RUT ni cargos. Nombres
+duplicados, inactivos o carpetas ambiguas requieren revisar la identidad.

@@ -243,3 +243,16 @@ except HTTPError as error:assert error.code==503
 headers.clear();headers.update(admin_headers)
 with request('/me') as response:assert json.load(response)['email']=='backup-admin@example.invalid'
 print('OK: actual HTTPS password policy, self-service change, session revocation, new login and explicit SMTP-unconfigured recovery; no mail sent.')
+
+with request('/users') as response:temporary_user_id=next(user['id'] for user in json.load(response) if user['email']=='password-ci@example.invalid')
+with request(f'/users/{temporary_user_id}/temporary-password',{}) as response:
+    generated=json.load(response);temporary=generated['temporary_password'];assert generated['password_change_required']
+with request('/auth/login',{'email':'password-ci@example.invalid','password':temporary}) as response:
+    login_result=json.load(response);assert login_result['password_change_required'];headers['Cookie']='; '.join(value.split(';',1)[0] for value in response.headers.get_all('Set-Cookie'));headers['X-PAGDOC-CSRF']=login_result['csrf_token']
+try:
+    request('/ops/bootstrap');raise AssertionError('Temporary password bypassed mandatory change')
+except HTTPError as error:assert error.code==403 and json.load(error)['detail']['code']=='password_change_required'
+with request('/auth/password/change',{'current_password':temporary,'new_password':'Fictitious-Personal43!'}) as response:assert json.load(response)['sessions_revoked']
+with request('/auth/login',{'email':'password-ci@example.invalid','password':'Fictitious-Personal43!'}) as response:assert not json.load(response)['password_change_required']
+headers.clear();headers.update(admin_headers)
+print('OK: actual HTTPS temporary credential generation, mandatory change before data access and personal-password completion; no mail sent.')

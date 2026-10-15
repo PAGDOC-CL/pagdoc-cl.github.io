@@ -433,3 +433,11 @@ El envío requiere la cuenta SMTP ya configurada con `control.sh configure-email
 En esta instalación el enlace apunta a `https://localhost:8443/app`, por lo que debe abrirse en el computador que ejecuta PAGDOC. Para un servidor privado accesible con otra dirección, establece `PAGDOC_PASSWORD_RESET_URL` en su URL HTTPS terminada en `/app`, dentro de la configuración privada, y reinicia el servicio. No se construyen enlaces usando cabeceras enviadas por el navegador. No publiques esa configuración ni sus credenciales.
 
 La migración `0020_password_recovery` agrega las solicitudes de recuperación y el control de intentos sin cambiar documentos existentes. Actualiza con `git pull --ff-only` y `bash deployment/local/control.sh start`.
+
+### Claves temporales para usuarios existentes
+
+En **Usuarios y acceso**, el administrador puede seleccionar **Generar clave temporal** para una cuenta activa de su empresa. La confirmación revoca las sesiones del usuario y muestra una clave aleatoria una sola vez. Copia y entrega la clave por un canal privado antes de cerrar la ventana. No se envía correo ni se guarda la clave en texto legible.
+
+Mientras SMTP no esté configurado, las claves temporales nuevas no tienen vencimiento automático. Una vez configurado, las nuevas claves se emitirán con 24 horas de vigencia. Las claves emitidas sin fecha no caducan retroactivamente: se cambian al primer ingreso o se renuevan de forma explícita. Al iniciar sesión, la API permite únicamente consultar la identidad, cambiar la contraseña o cerrar sesión hasta que el titular elija una clave personal. La nueva contraseña debe cumplir los requisitos y ser distinta de la temporal. El segundo factor existente permanece activo. Una clave temporal nueva invalida la anterior; una vencida requiere renovación administrativa o recuperación por correo configurado.
+
+Las cuentas anteriores conservan su acceso hasta que se les genere una clave temporal. La creación de usuarios en la interfaz exige cambio al primer ingreso de forma predeterminada. El administrador actual usa **Mi seguridad** para cambiar su propia clave. La migración `0021_temporary_password` agrega estos controles sin modificar documentos.

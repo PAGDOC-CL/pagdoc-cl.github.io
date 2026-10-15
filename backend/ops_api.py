@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0020_password_recovery"
+EXPECTED_SCHEMA_REVISION = "0021_temporary_password"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

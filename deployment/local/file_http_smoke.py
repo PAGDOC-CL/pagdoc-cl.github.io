@@ -221,3 +221,25 @@ for attempt in range(45):
 assert drug_analysis['status']=='ready' and drug_analysis['issued_on']=='2026-10-15' and drug_analysis['expires_on']=='2026-11-14',drug_analysis
 with request('/ops/files/analysis/status') as response:assert json.load(response)['alcohol_drugs_days']==30
 print('OK: confirmed joint worker registration, operational-only identities and actual offline drug report issuance plus 30-day expiry.')
+
+# Exercise the self-service password route over actual HTTPS without changing
+# the backup operator's credential or sending real messages.
+admin_headers=dict(headers)
+with request('/users',{'email':'password-ci@example.invalid','password':'Fictitious-Initial42!','role':'viewer'}) as response:assert json.load(response)['id']
+with request('/auth/login',{'email':'password-ci@example.invalid','password':'Fictitious-Initial42!'}) as response:
+    login_result=json.load(response);headers['Cookie']='; '.join(value.split(';',1)[0] for value in response.headers.get_all('Set-Cookie'));headers['X-PAGDOC-CSRF']=login_result['csrf_token']
+try:
+    request('/auth/password/change',{'current_password':'Fictitious-Initial42!','new_password':'weak-password'})
+    raise AssertionError('Weak password accepted')
+except HTTPError as error:assert error.code==422
+with request('/auth/password/change',{'current_password':'Fictitious-Initial42!','new_password':'Fictitious-Updated42!'}) as response:assert json.load(response)['sessions_revoked']
+try:
+    request('/me');raise AssertionError('Old session remained valid')
+except HTTPError as error:assert error.code==401
+with request('/auth/login',{'email':'password-ci@example.invalid','password':'Fictitious-Updated42!'}) as response:assert json.load(response)['authenticated']
+try:
+    request('/auth/password/forgot',{'email':'password-ci@example.invalid'});raise AssertionError('SMTP-unconfigured recovery claimed available')
+except HTTPError as error:assert error.code==503
+headers.clear();headers.update(admin_headers)
+with request('/me') as response:assert json.load(response)['email']=='backup-admin@example.invalid'
+print('OK: actual HTTPS password policy, self-service change, session revocation, new login and explicit SMTP-unconfigured recovery; no mail sent.')

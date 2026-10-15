@@ -157,11 +157,11 @@ def test_admin_password_reset_revokes_sessions(client):
     try:
         auth(viewer, "viewer@example.invalid", "testpass-viewer")
         auth(client)
-        reset = client.post("/users/3/reset-password", json={"password": "new-long-viewer-password"})
+        reset = client.post("/users/3/reset-password", json={"password": "New-long-viewer-password-42!"})
         assert reset.status_code == 200 and reset.json()["sessions_revoked"] is True
         assert viewer.get("/me").status_code == 401
         assert viewer.post("/auth/login", json={"email": "viewer@example.invalid", "password": "testpass-viewer"}).status_code == 401
-        assert viewer.post("/auth/login", json={"email": "viewer@example.invalid", "password": "new-long-viewer-password"}).status_code == 200
+        assert viewer.post("/auth/login", json={"email": "viewer@example.invalid", "password": "New-long-viewer-password-42!"}).status_code == 200
     finally:
         viewer.close()
 
@@ -280,7 +280,7 @@ def test_deactivating_user_revokes_their_sessions(client):
 
 def test_admin_can_create_user_and_it_is_tenant_scoped(client):
     auth(client)
-    response = client.post("/users", json={"email": "newuser@example.invalid", "password": "long-demo-password", "role": "viewer"})
+    response = client.post("/users", json={"email": "newuser@example.invalid", "password": "Long-demo-password-42!", "role": "viewer"})
     assert response.status_code == 201
     assert any(u["email"] == "newuser@example.invalid" for u in client.get("/users").json())
     auth(client, "dos@example.invalid", "testpass-two")
@@ -289,7 +289,7 @@ def test_admin_can_create_user_and_it_is_tenant_scoped(client):
 
 def test_duplicate_email_rejected(client):
     auth(client)
-    assert client.post("/users", json={"email": "dos@example.invalid", "password": "long-demo-password", "role": "viewer"}).status_code == 409
+    assert client.post("/users", json={"email": "dos@example.invalid", "password": "Long-demo-password-42!", "role": "viewer"}).status_code == 409
 
 
 def test_audit_is_tenant_isolated(client):

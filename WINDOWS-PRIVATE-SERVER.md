@@ -420,3 +420,16 @@ En cargas de trabajadores también se proponen fichas operacionales por nombre
 completo inequívoco en las carpetas de personal. Se confirman juntas, se reutiliza
 la identidad existente y no se crean cuentas, invitaciones, RUT ni cargos. Nombres
 duplicados, inactivos o carpetas ambiguas requieren revisar la identidad.
+
+
+### Cambio de contraseña y recuperación por correo
+
+Dentro de la sesión, abre **Mi seguridad → Cambiar mi contraseña**. Se requiere la contraseña actual y, si está habilitado, el segundo factor. La nueva contraseña debe tener entre 12 y 128 caracteres, al menos una mayúscula, un número y un carácter especial. Se cierran todas las sesiones después del cambio; las claves existentes siguen funcionando hasta que su titular las cambie.
+
+**Olvidé mi contraseña** envía un enlace al correo de una cuenta activa, válido por 30 minutos y de un solo uso. No se envían contraseñas, no se inicia sesión automáticamente y el MFA existente se conserva. Un enlace nuevo invalida el anterior. La base de datos guarda únicamente la huella del token; el enlace se lleva en el fragmento de la URL y se retira de la barra al abrirlo.
+
+El envío requiere la cuenta SMTP ya configurada con `control.sh configure-email`. Si no está configurada, la plataforma lo indica y no anuncia un correo enviado. El estado `sent` significa aceptado por SMTP, no llegada garantizada. El flujo no depende de tener activadas las alertas documentales del perfil.
+
+En esta instalación el enlace apunta a `https://localhost:8443/app`, por lo que debe abrirse en el computador que ejecuta PAGDOC. Para un servidor privado accesible con otra dirección, establece `PAGDOC_PASSWORD_RESET_URL` en su URL HTTPS terminada en `/app`, dentro de la configuración privada, y reinicia el servicio. No se construyen enlaces usando cabeceras enviadas por el navegador. No publiques esa configuración ni sus credenciales.
+
+La migración `0020_password_recovery` agrega las solicitudes de recuperación y el control de intentos sin cambiar documentos existentes. Actualiza con `git pull --ff-only` y `bash deployment/local/control.sh start`.

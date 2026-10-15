@@ -19,6 +19,7 @@ from file_gateway import ScanVerdict, SecureDocumentGateway
 from file_records import DocumentFileVersion, store_new_file_version
 from storage import EncryptedLocalStore
 import file_api
+import password_api
 
 
 TENANT_ID = 990001
@@ -39,6 +40,7 @@ def _seed():
         db.execute(delete(file_api.FileDestination).where(file_api.FileDestination.tenant_id == TENANT_ID))
         db.execute(delete(file_api.FileSubject).where(file_api.FileSubject.tenant_id == TENANT_ID))
         db.execute(delete(core.Document).where(core.Document.tenant_id == TENANT_ID))
+        db.execute(delete(password_api.PasswordRecovery).where(password_api.PasswordRecovery.tenant_id == TENANT_ID))
         db.execute(delete(core.User).where(core.User.tenant_id == TENANT_ID))
         db.execute(delete(core.Tenant).where(core.Tenant.id == TENANT_ID))
         db.commit()
@@ -276,3 +278,29 @@ def test_postgres_batch_and_attachment_share_safe_lock_order(tmp_path,monkeypatc
     for thread in threads:thread.join(20)
     assert sorted(outcomes,key=str)==[201,409]
     assert len(list(gateway.store.root.rglob('*.bin')))==1
+
+
+
+def test_postgres_recovery_link_can_only_be_consumed_once():
+    from fastapi import HTTPException,Response
+    from starlette.requests import Request
+    _seed()
+    token='fictitious-postgres-recovery-token-2026-only'
+    with core.SessionLocal() as db:
+        user=db.get(core.User,USER_ID)
+        db.add(password_api.PasswordRecovery(tenant_id=TENANT_ID,user_id=USER_ID,token_hash=core._sha256(token),credential_hash=core._sha256(user.password_hash),email_hash=core._sha256(user.email),created_at=password_api.now(),expires_at=password_api.now()+password_api.timedelta(minutes=30)))
+        db.commit()
+    barrier=threading.Barrier(2);outcomes=[]
+    def run():
+        with core.SessionLocal() as db:
+            try:
+                barrier.wait(10)
+                request=Request({'type':'http','client':('192.0.2.1',1234),'headers':[],'method':'POST','path':'/auth/password/reset'})
+                password_api.recover(password_api.RecoverIn(token=token,new_password='Fictitious-Pg-Password42!'),request,Response(),db)
+                outcomes.append(200)
+            except HTTPException as error:db.rollback();outcomes.append(error.status_code)
+            except Exception as error:db.rollback();outcomes.append(type(error).__name__)
+    threads=[threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:thread.start()
+    for thread in threads:thread.join(20)
+    assert sorted(outcomes,key=str)==[200,400]

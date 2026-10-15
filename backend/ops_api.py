@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0013_email_alerts"
+EXPECTED_SCHEMA_REVISION = "0014_user_onboarding"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

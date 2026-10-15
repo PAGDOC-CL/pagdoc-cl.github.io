@@ -243,9 +243,12 @@ el acceso desde **Usuarios y acceso**.
 El acceso desde otro computador requiere configurar una red privada; `localhost`
 solo funciona en el equipo servidor.
 
-El tutorial se abre al primer ingreso en cada navegador y está disponible desde
-**Tutorial**. Se adapta a los permisos reales del perfil y cubre documentos,
-planificador, revisiones, alertas y seguridad. No concede permisos adicionales.
+El tutorial se presenta una sola vez por cuenta y queda registrado en el servidor,
+incluso si después se usa otro navegador o cambia el rol. Cada paso abre directamente
+su módulo: servicios y centros de trabajo, planificador, documentos, revisiones,
+alertas y accesos según los permisos reales. No existe un botón fijo en la barra.
+Cerrar o finalizar el recorrido no lo vuelve a mostrar. Se conserva la marca de
+los navegadores que ya habían mostrado el tutorial anterior. No concede permisos.
 
 ### Avisos por correo (configuración privada pendiente)
 

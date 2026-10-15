@@ -13,7 +13,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-MAX_BYTES = int(os.getenv("PAGDOC_MAX_UPLOAD_BYTES", str(15 * 1024 * 1024)))
+MAX_BYTES = int(os.getenv("PAGDOC_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 SIGNATURES = {

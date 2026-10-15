@@ -124,7 +124,7 @@ def test_size_type_and_signature_are_validated(files, monkeypatch):
     assert upload(c,id,payload=b'<html>fictitious</html>').status_code==422
     assert upload(c,id,filename='fictitious.exe').status_code==422
     assert upload(c,id,media='text/html').status_code==415
-    assert upload(c,id,**{'Content-Length':str(16*1024*1024)}).status_code==413
+    assert upload(c,id,**{'Content-Length':str(51*1024*1024)}).status_code==413
     monkeypatch.setattr(file_api,'MAX_BYTES',10)
     assert upload(c,id).status_code==413
     assert not list(store.root.rglob('*.bin'));assert scanner.calls==0

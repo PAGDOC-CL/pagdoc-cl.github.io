@@ -112,7 +112,7 @@ print('OK: folder destinations, identical detection, confirmed replacement, pres
 def readable_pdf():
     stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'
     objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
-    body=b'%PDF-1.4\n';offsets=[]
+    body=b'%PDF-1.4\n'+b'% fictitious size-limit test padding\n'*(1024*1024);offsets=[]
     for i,obj in enumerate(objects,1):offsets.append(len(body));body+=f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
     start=len(body);body+=f'xref\n0 {len(objects)+1}\n0000000000 65535 f \n'.encode()
     for offset in offsets:body+=f'{offset:010} 00000 n \n'.encode()
@@ -135,4 +135,4 @@ for attempt in range(45):
     time.sleep(1)
 assert analysis['status']=='ready',analysis
 assert analysis['expires_on']=='2027-10-15'
-print('OK: real private PDF raster preview and background extraction with destination identity, applied expiry and no automatic accreditation.')
+print('OK: >35 MiB HTTPS upload, real antivirus scan and encrypted storage; real private PDF raster preview and background extraction with destination identity, applied expiry and no automatic accreditation.')

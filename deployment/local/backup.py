@@ -202,7 +202,8 @@ def verify_recovery(docker: Docker, folder: Path, manifest: dict) -> None:
         with tarfile.open(folder / 'objects.tar', 'r:') as objects:
             for row in rows:
                 member = members.get(str(row['tenant_id']) + '/' + row['object_key'] + '.bin')
-                if member is None or member.size > 32 * 1024 * 1024:
+                # Fernet encodes 50 MiB payloads as about 67 MiB of ciphertext.
+                if member is None or member.size > 72 * 1024 * 1024:
                     raise BackupError('Falta un archivo o excede el límite de verificación.')
                 data = cipher.decrypt(objects.extractfile(member).read())
                 if len(data) != row['size_bytes'] or hashlib.sha256(data).hexdigest() != row['sha256']:

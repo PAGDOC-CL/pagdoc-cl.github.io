@@ -88,9 +88,9 @@ services:
       CLAMD_CONF_AlertExceedsMax: 'yes'
       CLAMD_CONF_AlertEncryptedArchive: 'yes'
       CLAMD_CONF_AlertEncryptedDoc: 'yes'
-      CLAMD_CONF_StreamMaxLength: 16M
+      CLAMD_CONF_StreamMaxLength: 50M
       CLAMD_CONF_MaxScanSize: 100M
-      CLAMD_CONF_MaxFileSize: 20M
+      CLAMD_CONF_MaxFileSize: 50M
       CLAMD_CONF_MaxRecursion: '16'
       CLAMD_CONF_MaxFiles: '1000'
       CLAMD_CONF_MaxThreads: '2'

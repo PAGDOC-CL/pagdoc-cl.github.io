@@ -153,7 +153,7 @@ bash deployment/local/control.sh files-enable
 
 `files-enable` comprueba otra vez ClamAV y el almacenamiento, habilita la función en el archivo privado de configuración sin cambiar claves, y reinicia la API con esa opción. La función está deshabilitada de manera predeterminada. Si el antivirus no completa un análisis limpio con firmas vigentes, el archivo no se guarda.
 
-En `https://localhost:8443/app`, recarga con Ctrl+F5 y abre **Empresa y vehículos**. Registra o selecciona el vehículo cuando corresponda, registra el documento y adjunta su archivo. Se admiten PDF, PNG, JPEG, DOCX y XLSX de hasta 15 MiB; no macros, archivos cifrados ni paquetes Word/Excel con contenido activo o expansión excesiva. Esta sección no acepta ZIP como carga masiva. La importación por lotes y SharePoint siguen pendientes.
+En `https://localhost:8443/app`, recarga con Ctrl+F5 y abre **Empresa y vehículos**. Registra o selecciona el vehículo cuando corresponda, registra el documento y adjunta su archivo. Se admiten PDF, PNG, JPEG, DOCX y XLSX de hasta 50 MiB; no macros, archivos cifrados ni paquetes Word/Excel con contenido activo o expansión excesiva. Esta sección no acepta ZIP como carga masiva. La importación por lotes y SharePoint siguen pendientes.
 
 Administradores y editores pueden registrar y adjuntar; revisores y visores con permiso documental pueden consultar versiones y descargar. Los planificadores no tienen acceso documental. Cada operación comprueba empresa y sesión; las escrituras exigen CSRF. Las patentes existentes no se fusionan automáticamente.
 
@@ -187,7 +187,7 @@ Las versiones anteriores se conservan. El logo nunca se incorpora a GitHub Pages
 Si aún no se ha cargado el original, se muestra el nombre de la empresa.
 
 En **Empresa y vehículos → Cargar varios archivos** se pueden seleccionar entre
-1 y 250 documentos, hasta 15 MiB cada uno y 250 MiB en total. Extraer primero los
+1 y 3000 documentos, hasta 50 MiB cada uno, enviados individualmente. Extraer primero los
 ZIP en el computador. **Añadir carpeta y subcarpetas** incluye todos los archivos
 bajo la carpeta elegida; se puede repetir para acumular distintas carpetas en una
 misma carga. **Añadir archivos** permite combinarlos con archivos sueltos. Los
@@ -323,7 +323,7 @@ No crea identidades ni asigna por similitud. Si falta un trabajador, usa
 invitaciones. Los proyectos se registran desde **Proyectos y servicios**. Una ruta desconocida o ambigua se
 detiene antes de escribir: corregir el destino o usar la selección manual. Los
 destinos resueltos y los reemplazos se muestran juntos para una confirmación previa.
-Se mantienen los límites de 250 archivos, 15 MiB por archivo y 250 MiB por lote.
+Se admiten 3000 archivos por selección y 50 MiB por archivo. La comprobación de destinos se divide en grupos de 250 y los binarios se envían de uno en uno. No se reserva espacio por adelantado: comprueba el disco disponible y mantén abierta la ventana durante la carga.
 
 El perfil local `files` inicia también el servicio **analysis**. Después de escanear
 y cifrar un archivo, un trabajador privado lee el PDF, imagen, DOCX o XLSX sin

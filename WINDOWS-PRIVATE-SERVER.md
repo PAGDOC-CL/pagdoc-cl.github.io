@@ -388,3 +388,10 @@ un nombre original único dentro de ese destino reutiliza su carpeta asociada y
 se muestra como reemplazo a confirmar; conserva versiones y ruta original. Si
 hay más de una coincidencia, se bloquea para revisión. No se interpretan nombres
 diferentes como el mismo documento.
+
+
+Las rutas lógicas de carpetas y documentos admiten hasta 1024 caracteres en total
+(antes 200). La migración 0018 amplía el título y la ruta de origen; conserva las
+asociaciones e identifica rutas por SHA-256 de su forma normalizada para evitar
+claves de índice excesivas con Unicode en PostgreSQL. No renombra ni trunca rutas
+existentes. El límite individual de nombre de archivo continúa en 160 caracteres.

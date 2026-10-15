@@ -140,6 +140,16 @@ with request('/ops/files/documents?vehicle_id='+str(resolved[0]['vehicle_id'])) 
 print('OK: per-plate destination folder, direct child listing and confirmed loose update preserving the original folder.')
 
 
+long_path='Fictitious company/'+('Fictitious extended directory/'*25)+'long-evidence.pdf'
+assert 200<len(long_path)<=1024
+long_entry={'path':long_path,'subject_kind':'company','sha256':hashlib.sha256(content).hexdigest()}
+with request('/ops/files/batch/preview',{'entries':[long_entry]}) as response:assert json.load(response)['items'][0]['status']=='new'
+long_query={'path':long_path,'subject_kind':'company','expected_version':0,'allow_replace':'false'}
+with request('/ops/files/batch/item?'+urlencode(long_query),content,'application/pdf') as response:assert json.load(response)['status']=='created'
+with request('/ops/files/batch/preview',{'entries':[long_entry]}) as response:assert json.load(response)['items'][0]['status']=='identical'
+with request('/ops/files/documents?'+urlencode({'path_prefix':long_path.rsplit('/',1)[0],'folder_mode':'true'})) as response:assert json.load(response)['total']==1
+print('OK: >700-character private folder path, stable duplicate lookup and direct-child navigation on PostgreSQL.')
+
 # A valid fictitious PDF exercises the actual raster renderer and analysis worker.
 def readable_pdf():
     stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'

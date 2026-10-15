@@ -362,3 +362,13 @@ fallida no modifica ni aprueba el documento original.
 
 Las fechas verificadas alimentan los avisos del perfil. El envío de correos sigue
 pendiente de configurar y autorizar con el proveedor corporativo.
+
+
+La carga automática también propone crear fichas de vehículos que falten a partir
+de una patente inequívoca en carpetas de vehículos. Muestra las patentes una sola
+vez por ficha y exige confirmación conjunta antes de crearlas. Luego presenta
+los destinos y reemplazos antes de enviar binarios. Patentes existentes se
+reutilizan; las inactivas o ambiguas requieren revisión, sin reactivación ni fusión
+automática. Crear una ficha no acredita el vehículo ni inventa su tipo, marca o
+modelo. El modo manual agrupa por carpeta de documentos, evitando asignar una
+flota completa a un solo vehículo.

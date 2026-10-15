@@ -544,7 +544,11 @@ class DestinationRequest(BaseModel):
 @core.app.post('/ops/files/batch/destinations')
 def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
     require_enabled()
-    vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==user.tenant_id,core.Vehicle.active==1)).all()
+    return destination_proposals(data.paths,user,db)
+
+
+def destination_proposals(paths,user,db):
+    vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==user.tenant_id)).all()
     workers=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id,core.Worker.active==1)).all()
     projects=db.scalars(select(core.Project).where(core.Project.tenant_id==user.tenant_id,core.Project.active==1)).all()
     def clean_name(value):
@@ -552,7 +556,7 @@ def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
         return ' '.join(re.sub(r'[^a-z0-9]+',' ',value).split())
     company_name=db.get(core.Tenant,user.tenant_id).name
     results=[]
-    for path in data.paths:
+    for path in paths:
         destination_key(path)
         folders=path.rsplit('/',1)[0] if '/' in path else ''
         normalized=unicodedata.normalize('NFKD',folders).encode('ascii','ignore').decode().lower().replace('_',' ')
@@ -568,14 +572,40 @@ def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
             result={'path':path,'status':'resolved','subject_kind':'worker','worker_id':matched_workers[0].id,'vehicle_id':None,'project_id':matched_projects[0].id if matched_projects else None,'subject_name':matched_workers[0].full_name}
         elif len(matched_projects)==1 and not matched and not matched_workers and not company and not worker:
             result={'path':path,'status':'resolved','subject_kind':'project','project_id':matched_projects[0].id,'worker_id':None,'vehicle_id':None,'subject_name':matched_projects[0].name}
-        elif len(matched)==1 and not company and not worker and not matched_workers and not matched_projects:
+        elif len(matched)==1 and len(plates)==1 and matched[0].active and not company and not worker and not matched_workers and not matched_projects:
             result={'path':path,'status':'resolved','subject_kind':'vehicle','vehicle_id':matched[0].id,'subject_name':matched[0].plate or matched[0].label}
         elif company and not matched and not worker and not plates and not matched_workers and not matched_projects:
             result={'path':path,'status':'resolved','subject_kind':'company','vehicle_id':None,'subject_name':company_name}
+        elif not matched and len(plates)==1 and not company and not worker and not matched_workers and not matched_projects and re.search(r'vehicul|veihuc|fleet|arrendad',normalized) and re.fullmatch(r'(?:[A-Z]{4}[0-9]{2}|[A-Z]{2}[0-9]{4})',next(iter(plates))):
+            plate=next(iter(plates))
+            result={'path':path,'status':'vehicle_missing','subject_kind':None,'vehicle_id':None,'proposed_plate':plate,'proposed_label':'Vehículo '+plate,'reason':'Ficha de vehículo pendiente. Se puede crear junto a las demás con confirmación; no acredita el vehículo.'}
         else:
-            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Destino no inequívoco. No se asigna a otra empresa, trabajador, proyecto o vehículo por aproximación.'}
+            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Destino ambiguo, patente inactiva o sin identidad reconocible. Revisa la carpeta; no se asigna por aproximación.'}
         results.append(result)
     return {'items':results,'note':'La detección usa empresa explícita, patentes o nombres completos de trabajadores y proyectos registrados. Las coincidencias ambiguas requieren revisión.'}
+
+
+class RegisterFolderVehicles(DestinationRequest):
+    confirmed:Literal[True]
+
+
+@core.app.post('/ops/files/batch/vehicles')
+def register_folder_vehicles(data:RegisterFolderVehicles,user:core.Editor,db:core.Db):
+    require_enabled()
+    # Serialize with manual registration; retries reuse the tenant's exact plate.
+    db.scalar(select(core.Tenant).where(core.Tenant.id==user.tenant_id).with_for_update())
+    proposals=destination_proposals(data.paths,user,db)['items']
+    if any(item['status']=='review' for item in proposals):
+        raise HTTPException(409,'Hay destinos ambiguos o vehículos inactivos. No se crearon fichas en este grupo.')
+    pending={item['proposed_plate']:item for item in proposals if item['status']=='vehicle_missing'}
+    created=[]
+    for plate,item in sorted(pending.items()):
+        vehicle=core.Vehicle(tenant_id=user.tenant_id,label=item['proposed_label'],plate=plate,active=1)
+        db.add(vehicle);db.flush()
+        core.add_audit(db,user,'vehicle.folder_create','vehicle',vehicle.id)
+        created.append({'id':vehicle.id,'plate':plate,'label':vehicle.label})
+    db.commit()
+    return {'created':created,'created_count':len(created),'note':'Solo fichas operacionales; sin acreditación ni aprobación automática.'}
 
 
 @core.app.get('/ops/files/folders')

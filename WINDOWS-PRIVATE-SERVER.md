@@ -372,3 +372,19 @@ reutilizan; las inactivas o ambiguas requieren revisión, sin reactivación ni f
 automática. Crear una ficha no acredita el vehículo ni inventa su tipo, marca o
 modelo. El modo manual agrupa por carpeta de documentos, evitando asignar una
 flota completa a un solo vehículo.
+
+
+El módulo de archivos abre carpetas por destino: una carpeta de empresa y una
+por patente con documentos, además de trabajadores/proyectos cuando existan.
+Abrir una patente reúne sus documentos incluso si llegaron desde varias carpetas
+diferentes. Dentro se pueden recorrer las carpetas de origen, filtrar por tipo y
+consultar fechas/semáforos. Inicio vuelve a las carpetas; «Ver todos los documentos»
+abre la lista completa. Se aplica a los registros ya cargados sin volver a subir,
+mover ni duplicar binarios. El análisis privado sigue en segundo plano; «En cola»
+no significa que una fecha esté revisada.
+
+«Cargar en esta carpeta» preselecciona el destino abierto. Un archivo suelto con
+un nombre original único dentro de ese destino reutiliza su carpeta asociada y
+se muestra como reemplazo a confirmar; conserva versiones y ruta original. Si
+hay más de una coincidencia, se bloquea para revisión. No se interpretan nombres
+diferentes como el mismo documento.

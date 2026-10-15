@@ -126,6 +126,20 @@ vehicle_query={key:entry[key] for key in ['path','subject_kind','vehicle_id']};v
 with request('/ops/files/batch/item?'+urlencode(vehicle_query),content,'application/pdf') as response:assert json.load(response)['status']=='created'
 print('OK: confirmed joint vehicle registration, same-plate reuse and correctly bound private folder upload.')
 
+with request('/ops/files/folders?subject_kind=vehicle&vehicle_id='+str(resolved[0]['vehicle_id'])) as response:
+    folders=json.load(response);assert len(folders['destinations'])==1 and folders['destinations'][0]['count']==1
+with request('/ops/files/documents?'+urlencode({'vehicle_id':resolved[0]['vehicle_id'],'folder_mode':'true','path_prefix':'Vehiculos/Fictitious ABCD-12'})) as response:
+    assert json.load(response)['total']==1
+loose={**entry,'path':'evidence.pdf','sha256':hashlib.sha256(changed).hexdigest()}
+with request('/ops/files/batch/preview',{'entries':[loose]}) as response:
+    loose_plan=json.load(response)['items'][0];assert loose_plan['status']=='replace' and loose_plan['destination_path']==entry['path']
+loose_query={'path':'evidence.pdf','subject_kind':'vehicle','vehicle_id':resolved[0]['vehicle_id'],'expected_document_id':loose_plan['document_id'],'expected_version':1,'allow_replace':'true'}
+with request('/ops/files/batch/item?'+urlencode(loose_query),changed,'application/pdf') as response:assert json.load(response)['version']==2
+with request('/ops/files/documents?vehicle_id='+str(resolved[0]['vehicle_id'])) as response:
+    page=json.load(response);assert page['total']==1 and page['items'][0]['title']==entry['path']
+print('OK: per-plate destination folder, direct child listing and confirmed loose update preserving the original folder.')
+
+
 # A valid fictitious PDF exercises the actual raster renderer and analysis worker.
 def readable_pdf():
     stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'

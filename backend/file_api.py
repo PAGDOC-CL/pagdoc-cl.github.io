@@ -154,10 +154,13 @@ def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
 
 
 @core.app.get('/ops/files/documents')
-def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=200),document_type:str|None=Query(default=None,max_length=40)):
+def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=200),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
     query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
     if subject_kind:
         query = query.where(FileSubject.subject_kind == subject_kind)
+    if vehicle_id:query=query.where(FileSubject.vehicle_id==vehicle_id)
+    if worker_id:query=query.where(FileSubject.worker_id==worker_id)
+    if project_id:query=query.where(core.Document.project_id==project_id)
     if document_type:
         import json
         from document_analysis import FileAnalysis,TYPES
@@ -171,6 +174,9 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
     if path_prefix:
         destination_key(path_prefix.rstrip('/'))
         query=query.where(core.Document.title.startswith(path_prefix.rstrip('/')+'/',autoescape=True))
+        if folder_mode:query=query.where(~func.substr(core.Document.title,len(path_prefix.rstrip('/'))+2).contains('/'))
+    elif folder_mode:
+        query=query.where(~core.Document.title.contains('/'))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.execute(query.order_by(core.Document.id.desc()).offset(offset).limit(limit)).all()
     result = []
@@ -452,18 +458,21 @@ def resolve_destination(db, user, entry):
         if link.subject_kind != entry.subject_kind or link.vehicle_id != entry.vehicle_id or link.worker_id!=entry.worker_id or (entry.project_id is not None and doc.project_id!=entry.project_id):
             raise HTTPException(409, 'El destino del documento requiere revisión administrativa.')
         return doc, destination, name
-    # Adopt an old unbound record only on an exact source-path match. A loose
-    # file can also match its latest original filename. Ambiguous matches stop.
+    # Exact source paths remain distinct. Loose files uploaded into a selected
+    # destination reuse a unique latest filename, including already bound files.
     latest = select(DocumentFileVersion.document_id, func.max(DocumentFileVersion.version).label('number')).where(DocumentFileVersion.tenant_id == user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
     match = core.Document.title == entry.path
     if '/' not in entry.path:
         match = or_(match, DocumentFileVersion.original_name == entry.path)
-    query = select(core.Document).join(FileSubject, FileSubject.document_id == core.Document.id).outerjoin(latest, latest.c.document_id == core.Document.id).outerjoin(DocumentFileVersion, (DocumentFileVersion.document_id == core.Document.id) & (DocumentFileVersion.version == latest.c.number)).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id, FileSubject.subject_kind == entry.subject_kind, FileSubject.vehicle_id == entry.vehicle_id,FileSubject.worker_id==entry.worker_id, match, ~core.Document.id.in_(select(FileDestination.document_id))).limit(2)
+    query = select(core.Document).join(FileSubject, FileSubject.document_id == core.Document.id).outerjoin(latest, latest.c.document_id == core.Document.id).outerjoin(DocumentFileVersion, (DocumentFileVersion.document_id == core.Document.id) & (DocumentFileVersion.version == latest.c.number)).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id, FileSubject.subject_kind == entry.subject_kind, FileSubject.vehicle_id == entry.vehicle_id,FileSubject.worker_id==entry.worker_id, match).limit(2)
+    if '/' in entry.path:query=query.where(~core.Document.id.in_(select(FileDestination.document_id)))
     if entry.project_id is not None:query=query.where(core.Document.project_id==entry.project_id)
     candidates = db.scalars(query).all()
     if len(candidates) > 1:
         raise HTTPException(409, 'Hay varios documentos posibles para «' + entry.path + '». Revisa los registros existentes antes de reemplazar.')
-    return candidates[0] if candidates else None, None, name
+    doc=candidates[0] if candidates else None
+    bound=db.scalar(select(FileDestination).where(FileDestination.tenant_id==user.tenant_id,FileDestination.document_id==doc.id,FileDestination.subject_scope==scope)) if doc else None
+    return doc,bound,name
 
 
 def destination_plan(db, user, entry):
@@ -471,7 +480,7 @@ def destination_plan(db, user, entry):
     version = latest_version(db, user.tenant_id, doc.id) if doc else 0
     file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == doc.id, DocumentFileVersion.version == version)) if version else None
     status = 'identical' if file and file.sha256 == entry.sha256 else 'replace' if version else 'resume' if doc else 'new'
-    return {'path': entry.path, 'subject_kind': entry.subject_kind, 'vehicle_id': entry.vehicle_id,'worker_id':entry.worker_id,'project_id':entry.project_id, 'subject_name': name, 'document_id': doc.id if doc else None, 'expected_version': version, 'status': status}
+    return {'path': entry.path,'destination_path':destination.source_path if destination else doc.title if doc else entry.path, 'subject_kind': entry.subject_kind, 'vehicle_id': entry.vehicle_id,'worker_id':entry.worker_id,'project_id':entry.project_id, 'subject_name': name, 'document_id': doc.id if doc else None, 'expected_version': version, 'status': status}
 
 
 @core.app.post('/ops/files/batch/preview')
@@ -481,6 +490,8 @@ def preview_batch(data: BatchPreview, user: core.Editor, db: core.Db):
     if len(set(keys)) != len(keys):
         raise HTTPException(422, 'La carga contiene rutas repetidas para el mismo destino.')
     items = [destination_plan(db, user, entry) for entry in data.entries]
+    identities=[item['document_id'] for item in items if item['document_id'] is not None]
+    if len(identities)!=len(set(identities)):raise HTTPException(409,'Dos archivos apuntan al mismo documento existente. Selecciona una sola actualización por documento.')
     core.add_audit(db, user, 'document.batch_preview', 'tenant', user.tenant_id)
     db.commit()
     return {'items': items}
@@ -609,11 +620,23 @@ def register_folder_vehicles(data:RegisterFolderVehicles,user:core.Editor,db:cor
 
 
 @core.app.get('/ops/files/folders')
-def folders(user:FileRead,db:core.Db):
-    names=db.scalars(select(core.Document.title).join(FileSubject,FileSubject.document_id==core.Document.id).where(core.Document.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
-    counts={}
-    for name in names:
-        parts=name.split('/')[:-1]
+def folders(user:FileRead,db:core.Db,subject_kind:Literal['company','vehicle','worker','project']|None=None,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
+    query=select(core.Document,FileSubject).join(FileSubject,FileSubject.document_id==core.Document.id).where(core.Document.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)
+    if subject_kind:query=query.where(FileSubject.subject_kind==subject_kind)
+    if vehicle_id:query=query.where(FileSubject.vehicle_id==vehicle_id)
+    if worker_id:query=query.where(FileSubject.worker_id==worker_id)
+    if project_id:query=query.where(core.Document.project_id==project_id)
+    counts={};destinations={}
+    for doc,link in db.execute(query).all():
+        identity=link.vehicle_id if link.subject_kind=='vehicle' else link.worker_id if link.subject_kind=='worker' else doc.project_id if link.subject_kind=='project' else None
+        key=link.subject_kind+(':'+str(identity) if identity else '')
+        label=doc.subject_name
+        if link.subject_kind=='vehicle' and key not in destinations:
+            vehicle=db.get(core.Vehicle,link.vehicle_id)
+            label=vehicle.plate or vehicle.label
+        destination=destinations.setdefault(key,{'key':key,'subject_kind':link.subject_kind,'subject_id':identity,'label':label,'count':0})
+        destination['count']+=1
+        parts=doc.title.split('/')[:-1]
         for index in range(1,len(parts)+1):
             path='/'.join(parts[:index]);counts[path]=counts.get(path,0)+1
-    return {'folders':[{'path':path,'count':counts[path]} for path in sorted(counts)]}
+    return {'folders':[{'path':path,'count':counts[path]} for path in sorted(counts)],'destinations':sorted(destinations.values(),key=lambda item:(item['subject_kind'],item['label']))}

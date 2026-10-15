@@ -390,3 +390,41 @@ def test_folder_vehicle_registration_refuses_ambiguity_inactive_and_missing_perm
     assert c.post('/ops/files/batch/vehicles',json={'paths':[paths[0]],'confirmed':True}).status_code==403
     login(c,5)
     assert c.post('/ops/files/batch/vehicles',json={'paths':[paths[0]],'confirmed':True}).status_code==403
+
+
+def test_destination_folders_and_direct_children_are_scoped(files):
+    c,_,_=files
+    paths=[('Empresa/root.pdf','company',None),('Empresa/Certificados/nested.pdf','company',None),('Vehiculos/TEST11/a.pdf','vehicle',1),('Vehiculos/TEST11/Seguros/b.pdf','vehicle',1)]
+    for path,kind,vehicle in paths:
+        create(c,title=path,subject_kind=kind,vehicle_id=vehicle)
+    result=c.get('/ops/files/folders').json()
+    assert {item['key']:item['count'] for item in result['destinations']}=={'company':2,'vehicle:1':2}
+    assert c.get('/ops/files/documents',params={'subject_kind':'vehicle','vehicle_id':1}).json()['total']==2
+    direct=c.get('/ops/files/documents',params={'path_prefix':'Vehiculos/TEST11','folder_mode':True,'vehicle_id':1}).json()
+    assert [item['title'] for item in direct['items']]==['Vehiculos/TEST11/a.pdf']
+    assert c.get('/ops/files/documents',params={'folder_mode':True}).json()['total']==0
+    scoped=c.get('/ops/files/folders',params={'subject_kind':'vehicle','vehicle_id':1}).json()
+    assert len(scoped['destinations'])==1 and all(item['path'].startswith('Vehiculos') for item in scoped['folders'])
+    assert c.get('/ops/files/documents',params={'vehicle_id':2}).json()['total']==0
+    login(c,2)
+    assert c.get('/ops/files/folders',params={'vehicle_id':1}).json()=={'folders':[],'destinations':[]}
+
+
+def test_loose_update_reuses_existing_vehicle_folder_after_confirmation(files):
+    import hashlib
+    c,_,_=files
+    old=b'%PDF-1.7\n% fictitious old document\n%%EOF';new=b'%PDF-1.7\n% fictitious new document\n%%EOF'
+    entry={'path':'Vehiculos/TEST11/Seguros/policy.pdf','subject_kind':'vehicle','vehicle_id':1,'sha256':hashlib.sha256(old).hexdigest()}
+    plan=c.post('/ops/files/batch/preview',json={'entries':[entry]}).json()['items'][0]
+    query={key:entry[key] for key in ['path','subject_kind','vehicle_id']};query['expected_version']=0
+    assert c.post('/ops/files/batch/item',params=query,content=old,headers={'Content-Type':'application/pdf'}).status_code==201
+    entry['path']='policy.pdf';entry['sha256']=hashlib.sha256(new).hexdigest()
+    proposed=c.post('/ops/files/batch/preview',json={'entries':[entry]}).json()['items'][0]
+    assert proposed['status']=='replace' and proposed['destination_path']=='Vehiculos/TEST11/Seguros/policy.pdf'
+    query.update(path='policy.pdf',expected_document_id=proposed['document_id'],expected_version=1)
+    assert c.post('/ops/files/batch/item',params=query,content=new,headers={'Content-Type':'application/pdf'}).status_code==409
+    query['allow_replace']=True
+    assert c.post('/ops/files/batch/item',params=query,content=new,headers={'Content-Type':'application/pdf'}).status_code==201
+    docs=c.get('/ops/files/documents',params={'vehicle_id':1}).json()['items']
+    assert len(docs)==1 and docs[0]['title']=='Vehiculos/TEST11/Seguros/policy.pdf' and docs[0]['version']==2
+    assert c.get(f"/ops/files/documents/{proposed['document_id']}/versions/1/download").content==old

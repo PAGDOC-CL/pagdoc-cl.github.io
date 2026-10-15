@@ -76,8 +76,8 @@
     ]
   },
   "files-write": {
-    "title": "Cargar empresa y vehículos",
-    "nav": "Empresa y vehículos",
+    "title": "Carpetas de empresa, vehículos y trabajadores",
+    "nav": "Empresa",
     "slides": [
       [
         "Añade la carpeta principal",
@@ -99,11 +99,11 @@
   },
   "files-read": {
     "title": "Consultar documentos",
-    "nav": "Empresa y vehículos",
+    "nav": "Empresa",
     "slides": [
       [
         "Localiza la carpeta y el destino",
-        "Filtra empresa, vehículos, trabajadores o proyectos y sus subcarpetas."
+        "Abre Empresa, Vehículos o Trabajadores en la barra lateral. Los proyectos tienen acceso desde su ficha."
       ],
       [
         "Abre la vista previa",

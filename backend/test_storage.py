@@ -72,3 +72,32 @@ def test_delete_removes_object(store):
     assert store.exists(1, obj.object_key)
     store.delete(1, obj.object_key)
     assert not store.exists(1, obj.object_key)
+
+
+def test_private_file_and_directory_permissions(store):
+    obj = store.put(1, 'ficticio.pdf', 'application/pdf', b'%PDF-1.7\nfictional')
+    assert store.root.stat().st_mode & 0o777 == 0o700
+    assert (store.root / '1').stat().st_mode & 0o777 == 0o700
+    assert (store.root / '1' / (obj.object_key + '.bin')).stat().st_mode & 0o777 == 0o600
+
+
+def test_shared_storage_directory_is_rejected(tmp_path):
+    root = tmp_path / 'shared'
+    root.mkdir(mode=0o755)
+    with pytest.raises(storage.StorageError, match='private permissions'):
+        storage.EncryptedLocalStore(root, Fernet.generate_key().decode())
+
+
+def test_tenant_symlink_cannot_alias_another_tenant(store):
+    obj = store.put(1, 'ficticio.pdf', 'application/pdf', b'%PDF-1.7\nfictional')
+    (store.root / '2').symlink_to(store.root / '1', target_is_directory=True)
+    with pytest.raises(storage.StorageError, match='Symbolic links'):
+        store.get(2, obj.object_key)
+
+
+def test_object_symlinks_are_rejected(store):
+    obj = store.put(1, 'ficticio.pdf', 'application/pdf', b'%PDF-1.7\nfictional')
+    alias = 'a' * 32
+    (store.root / '1' / (alias + '.bin')).symlink_to(store.root / '1' / (obj.object_key + '.bin'))
+    with pytest.raises(storage.StorageError, match='Symbolic links'):
+        store.get(1, alias)

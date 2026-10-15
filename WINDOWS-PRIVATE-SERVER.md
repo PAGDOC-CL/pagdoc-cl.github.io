@@ -81,7 +81,29 @@ Prueba crear un servicio ficticio, asignar descanso/terreno y registrar asistenc
 
 ## Antes de incorporar los documentos reales
 
-La carga binaria y SharePoint siguen deshabilitados. Este paso prepara y comprueba el servidor, pero no declara la plataforma apta para documentación real. Faltan almacenamiento privado y antivirus integrados, respaldo externo con restauración comprobada, autorización Microsoft corporativa y un piloto completo de permisos y recuperación. No copies los ZIP a la carpeta del repositorio.
+### Preparar antivirus y almacenamiento cifrado
+
+La imagen privada monta un volumen separado `file_objects` en `/var/lib/pagdoc-files`, propiedad del usuario de la API y con permisos privados. Los archivos se cifran antes de escribirse. La clave sigue en la configuración privada existente: no la cambies ni la publiques. Los directorios compartidos y los enlaces simbólicos se rechazan.
+
+ClamAV se inicia solo al solicitar el perfil opcional `files`. No publica puertos en Windows ni fuera de Docker. Antes de iniciarlo comprueba los recursos de Ubuntu con `free -h` y `df -h /var/lib/docker`. Reserva al menos 4 GiB de RAM disponible para este paso y espacio para la imagen, las firmas y los archivos; ClamAV recomienda aproximadamente 5 GiB de espacio libre para su aplicación. No contrata servicios ni pruebas de pago.
+
+Después de actualizar y reconstruir PAGDOC, desde la misma ventana de Ubuntu:
+
+```bash
+cd "$HOME/pagdoc-private" &&
+bash deployment/local/control.sh files-start &&
+bash deployment/local/control.sh files-check
+```
+
+La primera descarga y actualización de firmas puede tardar varios minutos y requiere Internet. `files-start` rechaza el inicio si Ubuntu no dispone de 4 GiB de RAM disponible. `files-check` analiza un PDF ficticio, verifica su cifrado y lectura, comprueba el rechazo de la cadena inocua de prueba antivirus EICAR en memoria y elimina el objeto ficticio. No incorpora los ZIP ni modifica documentos existentes.
+
+El adaptador exige una respuesta limpia completa y una base de firmas cargada con fecha verificable de los últimos siete días. Una desconexión, respuesta incompleta, límite excedido o firma antigua bloquea el almacenamiento. El antivirus reduce el riesgo, pero no valida las fechas ni acredita documentos.
+
+Esta preparación **no habilita cargas ni descargas HTTP**. Faltan las rutas autenticadas y sus permisos, el flujo de empresa/vehículos y el respaldo externo con restauración. SharePoint y los envíos externos siguen pendientes. No copies los ZIP al repositorio. Incluye el volumen `file_objects` y la configuración de cifrado en el futuro respaldo cifrado externo; respaldar solo PostgreSQL no recupera los archivos.
+
+Referencias: [ClamAV en Docker y recursos](https://docs.clamav.net/manual/Installing/Docker.html), [protocolo de análisis](https://docs.clamav.net/manual/Usage/ClamdProtocol.html).
+
+La carga binaria y SharePoint siguen deshabilitados. Este paso prepara y comprueba el servidor, pero no declara la plataforma apta para documentación real. Faltan integrar y comprobar el flujo de archivos en el equipo final, un respaldo externo con restauración comprobada, autorización Microsoft corporativa y un piloto completo de permisos y recuperación. No copies los ZIP a la carpeta del repositorio.
 
 Conserva una copia cifrada independiente de la base de datos **y** del archivo de configuración, que contiene la clave de cifrado. Los volúmenes en el mismo equipo no son un respaldo externo. Las plantillas de respaldo están en `deployment/`, pendientes de configurar y verificar en el equipo.
 

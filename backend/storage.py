@@ -67,8 +67,12 @@ def validate_payload(data: bytes, media_type: str) -> None:
 
 class EncryptedLocalStore:
     def __init__(self, root: Path, encryption_key: str):
+        if root.is_symlink():
+            raise StorageError("Storage root must not be a symbolic link")
         self.root = root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if self.root.stat().st_mode & 0o077:
+            raise StorageError("Storage root must have private permissions")
         try:
             self.cipher = Fernet(encryption_key.encode("utf-8"))
         except (ValueError, TypeError) as exc:
@@ -77,7 +81,11 @@ class EncryptedLocalStore:
     def _path(self, tenant_id: int, object_key: str) -> Path:
         if tenant_id <= 0 or not re.fullmatch(r"[0-9a-f]{32}", object_key):
             raise StorageError("Invalid storage identifier")
-        path = (self.root / str(tenant_id) / f"{object_key}.bin").resolve()
+        tenant = self.root / str(tenant_id)
+        path = tenant / f"{object_key}.bin"
+        if tenant.is_symlink() or path.is_symlink():
+            raise StorageError("Symbolic links are not allowed in private storage")
+        path = path.resolve()
         if self.root not in path.parents:
             raise StorageError("Unsafe storage path")
         return path
@@ -86,11 +94,23 @@ class EncryptedLocalStore:
         validate_payload(data, media_type)
         object_key = uuid.uuid4().hex
         path = self._path(tenant_id, object_key)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.parent.stat().st_mode & 0o077:
+            raise StorageError("Tenant storage must have private permissions")
         encrypted = self.cipher.encrypt(data)
         tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(encrypted)
-        os.replace(tmp, path)
+        created = False
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            created = True
+            with os.fdopen(fd, 'wb') as output:
+                output.write(encrypted)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(tmp, path)
+        finally:
+            if created and tmp.exists() and not tmp.is_symlink():
+                tmp.unlink()
         return StoredObject(
             object_key=object_key,
             original_name=clean_display_name(original_name),

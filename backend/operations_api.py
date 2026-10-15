@@ -7,7 +7,7 @@ registered binary version and the required review must match current metadata.
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -40,6 +40,7 @@ class Service(core.Base):
     supervisor: Mapped[str] = mapped_column(String(150))
     starts_on: Mapped[date] = mapped_column(Date)
     ends_on: Mapped[date] = mapped_column(Date)
+    service_kind: Mapped[str] = mapped_column(String(20),default='unclassified',server_default='unclassified')
     status: Mapped[str] = mapped_column(String(20),default='scheduled')
     version: Mapped[int] = mapped_column(Integer,default=1)
     closure_json: Mapped[str | None] = mapped_column(Text,nullable=True)
@@ -162,7 +163,20 @@ class OpsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra='forbid')
 
 
+ServiceKind = Literal['project','emergency','scheduled','unclassified']
+
+
+class ProjectCreateIn(OpsInput):
+    name: str = Field(min_length=2,max_length=150)
+
+
+class ServiceClassificationIn(OpsInput):
+    service_kind: ServiceKind
+    expected_version: int = Field(ge=1)
+
+
 class ServiceIn(OpsInput):
+    service_kind: ServiceKind = 'unclassified'
     project_id: int = Field(gt=0)
     code: str = Field(min_length=2,max_length=60)
     name: str = Field(min_length=2,max_length=160)
@@ -199,7 +213,7 @@ class AssignmentIn(OpsInput):
 
 
 def service_payload(s):
-    return {k:getattr(s,k) for k in ('id','project_id','code','name','client','location','supervisor','starts_on','ends_on','status','version')}
+    return {k:getattr(s,k) for k in ('id','project_id','code','name','client','location','supervisor','starts_on','ends_on','service_kind','status','version')}
 
 
 def assignment_payload(a):
@@ -245,6 +259,17 @@ def bootstrap(user:core.Auth,db:core.Db):
     return {'tenant':{'id':user.tenant_id,'name':db.get(core.Tenant,user.tenant_id).name},'me':{'id':user.id,'email':user.email,'role':user.role,'mfa_enabled':bool(user.mfa_enabled),'capabilities':capabilities(user.role)},'workers':[{'id':w.id,'full_name':w.full_name,'job_title':w.job_title} for w in people],'projects':[{'id':p.id,'name':p.name} for p in projects],'users':[{'id':u.id,'label':u.email} for u in users if user.role=='admin' or u.id==user.id]}
 
 
+@core.app.post('/ops/projects',status_code=201)
+def add_project(data:ProjectCreateIn,user:PlanWrite,_:core.Csrf,db:core.Db):
+    db.scalar(select(core.Tenant).where(core.Tenant.id==user.tenant_id).with_for_update())
+    names=db.scalars(select(core.Project.name).where(core.Project.tenant_id==user.tenant_id)).all()
+    if data.name.casefold() in {name.strip().casefold() for name in names}:
+        raise HTTPException(409,'Ya existe un proyecto con ese nombre en esta empresa.')
+    row=core.Project(tenant_id=user.tenant_id,name=data.name,active=1)
+    db.add(row);db.flush();core.add_audit(db,user,'project.create','project',row.id);commit(db)
+    return {'id':row.id,'name':row.name,'active':bool(row.active)}
+
+
 @core.app.get('/ops/services')
 def list_services(user:PlanRead,db:core.Db):
     return [service_payload(s) for s in db.scalars(select(Service).where(Service.tenant_id==user.tenant_id).order_by(Service.starts_on.desc())).all()]
@@ -260,6 +285,18 @@ def add_service(data:ServiceIn,user:PlanWrite,_:core.Csrf,db:core.Db):
     except IntegrityError:
         db.rollback();raise HTTPException(409,'Service code already exists')
     core.add_audit(db,user,'service.create','service',row.id);commit(db);return service_payload(row)
+
+
+@core.app.patch('/ops/services/{service_id}/classification')
+def classify_service(service_id:int,data:ServiceClassificationIn,user:PlanWrite,_:core.Csrf,db:core.Db):
+    row=db.scalar(select(Service).where(Service.id==service_id,Service.tenant_id==user.tenant_id).with_for_update())
+    if row is None:raise HTTPException(404,'Servicio no encontrado.')
+    if row.version!=data.expected_version:raise HTTPException(409,'El servicio cambió. Actualiza antes de clasificar.')
+    if row.status in {'completed','cancelled'}:raise HTTPException(409,'No se modifica la clasificación de servicios cerrados o cancelados.')
+    if row.service_kind!=data.service_kind:
+        row.service_kind=data.service_kind;row.version+=1
+        core.add_audit(db,user,'service.classify','service',row.id);commit(db)
+    return service_payload(row)
 
 
 @core.app.get('/ops/assignments')

@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0014_user_onboarding"
+EXPECTED_SCHEMA_REVISION = "0015_service_kind"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

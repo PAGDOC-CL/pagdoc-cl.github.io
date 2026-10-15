@@ -107,6 +107,39 @@ La carga binaria y SharePoint siguen deshabilitados. Este paso prepara y comprue
 
 Conserva una copia cifrada independiente de la base de datos **y** del archivo de configuración, que contiene la clave de cifrado. Los volúmenes en el mismo equipo no son un respaldo externo. Las plantillas de respaldo están en `deployment/`, pendientes de configurar y verificar en el equipo.
 
+### Respaldo cifrado en el SSD de Windows
+
+El asistente `deployment/local/backup.py` crea una copia local con AES-256-GCM y una clave derivada de una contraseña privada mediante scrypt. Esta operación cifra el archivo de respaldo; no cambia el cifrado completo de Windows ni del SSD. La copia en el mismo disco no protege frente a su pérdida o falla física.
+
+Instala la dependencia gratuita de Ubuntu una sola vez:
+
+```bash
+sudo apt-get update && sudo apt-get install -y python3-cryptography
+```
+
+Con PAGDOC iniciado, desde Ubuntu, cambia `TU_USUARIO` por la carpeta real del usuario de Windows:
+
+```bash
+cd "$HOME/pagdoc-private" &&
+python3 deployment/local/backup.py create "/mnt/c/Users/TU_USUARIO/PAGDOC_Respaldos"
+```
+
+El asistente solicita una contraseña de respaldo de al menos 16 caracteres y su confirmación. No la muestra, no la acepta como argumento ni la guarda en variables de entorno o en el respaldo. Consérvala por separado: perderla impide abrir la copia. No la envíes por mensajes.
+
+La copia incluye el volcado PostgreSQL, los objetos cifrados, la configuración con las claves necesarias para recuperarlos y los datos de Caddy con los certificados locales. Pausa brevemente la API y el proxy para tomar una copia consistente, y los reinicia incluso si falla la captura. No detiene PostgreSQL ni borra volúmenes. Evita otros comandos administrativos que escriban en la base durante la copia.
+
+Antes de mostrar `OK`, el asistente comprueba la autenticidad del cifrado, los hashes del contenido y una restauración PostgreSQL real en un contenedor temporal sin red, sin puertos publicados y con datos en memoria. Compara recuentos y descifra cada archivo registrado para comprobar su tamaño y hash. El contenedor temporal se elimina al terminar; la base original no se reemplaza. La verificación requiere memoria suficiente para esa copia temporal de la base.
+
+El destino de Windows recibe únicamente el archivo cifrado `.pagdoc.enc`. Los temporales sin cifrar se crean en un directorio privado de Ubuntu y se eliminan al finalizar; esto no promete borrado físico seguro ante una interrupción o un SSD. No publiques el respaldo, pues incluye material de recuperación sensible aunque esté cifrado.
+
+Para volver a comprobar una copia existente:
+
+```bash
+python3 deployment/local/backup.py verify "/mnt/c/Users/TU_USUARIO/PAGDOC_Respaldos/NOMBRE_DEL_RESPALDO.pagdoc.enc"
+```
+
+La comprobación nunca restaura sobre el servidor activo. Una recuperación de producción se debe preparar en una instancia privada separada y verificar antes de cambiar el servicio. Este asistente no programa tareas automáticas ni envía copias a SharePoint.
+
 ## Referencias
 
 - [Docker Engine en Ubuntu](https://docs.docker.com/engine/install/ubuntu/).

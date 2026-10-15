@@ -1,7 +1,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.resolve(__dirname,'..'),errors=[],calls=[],downloads=[];
-const docs=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
+const docs=[],workers=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
 let onboardingSeen=false;
 let signedIn=false,rejectUpload=false,logoVersion=0,rejectName='';const previewHashes=new Map();
 const me={id:1,email:'admin@example.invalid',role:'admin',capabilities:['plan.read','plan.write','documents.read','documents.write','documents.review','tasks.read','tasks.write','users.manage']};
@@ -24,9 +24,18 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
    else if(url.pathname==='/ops/email-alerts/preview')body={recipient:me.email,expiring:2,expired:1,overdue_tasks:3,missing_dates:4,delivery_configured:false};
    else if(url.pathname==='/ops/branding')body={logo_version:logoVersion};
    else if(url.pathname==='/ops/branding/logo'){assert(options.body instanceof w.File);assert.equal(options.headers['Content-Type'],'image/png');assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');body={logo_version:++logoVersion};}
-   else if(url.pathname==='/ops/bootstrap')body={me,tenant:{id:1,name:'Fictitious Company'},workers:[],projects:[],users:[]};
+   else if(url.pathname==='/workers'&&options.method==='POST'){const worker={id:workers.length+1,...payload};workers.push(worker);body=worker;}
+   else if(url.pathname==='/ops/bootstrap')body={me,tenant:{id:1,name:'Fictitious Company'},workers,projects:[],users:[]};
    else if(url.pathname==='/ops/dashboard')body={active_services:0,pending_tasks:0,overdue_tasks:0,tomorrow_assignments:0,tomorrow_blocked:0};
    else if(url.pathname==='/ops/integrations')body={storage:{binary_http_enabled:true}};
+   else if(url.pathname==='/ops/files/folders')body={folders:[...new Set(docs.filter(doc=>doc.title.includes('/')).map(doc=>doc.title.slice(0,doc.title.lastIndexOf('/'))))].map(path=>({path,count:docs.filter(doc=>doc.title.startsWith(path+'/')).length}))};
+   else if(url.pathname==='/ops/files/batch/destinations')body={items:payload.paths.map(path=>path.startsWith('Empresa/')?{path,status:'resolved',subject_kind:'company',vehicle_id:null,subject_name:'Fictitious Company'}:{path,status:'review'})};
+   else if(/\/ops\/files\/documents\/\d+\/analysis(?:\/confirm)?$/.test(url.pathname)){
+    const doc=docs.find(doc=>doc.id===+url.pathname.split('/')[4]);
+    if(url.pathname.endsWith('/confirm')){assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');assert.equal(payload.expected_version,doc.version);doc.expires_on=payload.expires_on;doc.analysis={status:'confirmed',traffic_light:'valid',type_label:'Certificado'};}
+    body={status:doc.analysis?.status||'review',version:doc.version,document_type:'certificado',type_label:'Certificado',issued_on:'2026-10-15',proposed_expires_on:'2027-10-15',expires_on:doc.expires_on,traffic_light:doc.analysis?.traffic_light||'warning',warnings:['Confirmar lectura ficticia']};
+   }
+   else if(/\/ops\/files\/documents\/\d+\/versions\/\d+\/preview$/.test(url.pathname))body={kind:'pdf',pages:2,name:'fictitious.pdf'};
    else if(url.pathname==='/ops/files/status')body={enabled:true,ready_for_upload:true,max_bytes:15*1024*1024};
    else if(url.pathname==='/ops/files/subjects')body={company:'Fictitious Company',vehicles};
    else if(url.pathname==='/ops/files/batch/preview'){
@@ -42,7 +51,7 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
     if(payload.subject_kind==='vehicle')assert(vehicles.some(v=>v.id===payload.vehicle_id));else assert.equal(payload.vehicle_id,null);assert.equal(payload.expires_on,null);
     const doc={id:docs.length+1,...payload,subject_name:'TEST11',version:0,review_state:'pending',expiry_status:'no_date',file_name:null};docs.push(doc);body={id:doc.id,version:0};
    }else if(url.pathname==='/ops/files/documents'){
-    const items=docs.filter(doc=>!url.searchParams.has('subject_kind')||doc.subject_kind===url.searchParams.get('subject_kind'));body={items,total:items.length,offset:0,limit:50};
+    const items=docs.filter(doc=>(!url.searchParams.has('subject_kind')||doc.subject_kind===url.searchParams.get('subject_kind'))&&(!url.searchParams.get('path_prefix')||doc.title.startsWith(url.searchParams.get('path_prefix')+'/')));body={items,total:items.length,offset:0,limit:50};
    }else if(/\/ops\/files\/documents\/\d+\/versions$/.test(url.pathname)){
     const id=+url.pathname.split('/')[4],doc=docs.find(doc=>doc.id===id);
     if(options.method==='POST'){
@@ -82,6 +91,8 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  Object.defineProperty(field,'files',{value:[new w.File(['%PDF-1.7 fictitious'],'fictitious.pdf',{type:'application/pdf'})],configurable:true});
  rejectUpload=true;await submit();assert($('editor').open);assert($('form-error').textContent.includes('Fictitious antivirus rejection'));assert.equal(docs[0].version,0);
  rejectUpload=false;await submit();assert(!$('editor').open);assert.equal(docs[0].version,1);assert($('view').textContent.includes('Versión 1'));assert.equal(docs[0].review_state,'pending');
+ await click('[data-action="file-preview"]');assert.equal(downloads.length,0,'Opening a preview does not trigger a download');assert($('dialog-detail').querySelector('img').src.endsWith('page=1'));await click('[data-action="file-preview-next"]');assert($('dialog-detail').querySelector('img').src.endsWith('page=2'));$('close-dialog').click();
+ await click('[data-action="file-analysis"]');assert($('dialog-detail').textContent.includes('2027-10-15'));await click('[data-action="file-confirm-analysis"]');set('reason','Revisado con documento ficticio');await submit();assert.equal(docs[0].expires_on,'2027-10-15');assert($('view').textContent.includes('Fechas confirmadas'));
  await click('[data-action="file-history"]');assert($('dialog-detail').textContent.includes('fictitious-ci-scanner'));await click('[data-action="file-download"]');assert.deepEqual(downloads,['fictitious.pdf']);
  $('close-dialog').click();await click('[data-action="file-batch"]');
  const batchField=$('edit-form').elements.upload_files;
@@ -112,6 +123,9 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  set('folder_vehicle_0','1');set('folder_vehicle_1','2');assert(!$('edit-form').elements.confirm_destination.checked);$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before+2);assert.deepEqual(docs.slice(-2).map(d=>d.vehicle_id),[1,2]);
  await click('[data-action="file-batch"]');addFolders(Array.from({length:51},(_,i)=>directoryFile('Company/Archive/fictitious-'+i+'.pdf')));before=docs.length;$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before+51);assert($('message').textContent.includes('51 archivos guardados'));
  await click('[data-action="file-batch"]');before=docs.length;addFolders(Array.from({length:251},(_,i)=>directoryFile('Company/Large/fictitious-'+i+'.pdf')));assert($('form-error').textContent.includes('250'));assert($('batch-preview').textContent.includes('0 archivos'));assert.equal(docs.length,before);$('close-dialog').click();
+ await click('[data-action="file-auto"]');assert.equal($('edit-form').elements.subject_kind.value,'auto');before=docs.length;addFolders([directoryFile('Empresa/Certificados/automatico.pdf')]);await submit();assert.equal(docs.length,before);assert($('batch-warning').textContent.includes('Destinos detectados'));$('edit-form').elements.confirm_replacements.checked=true;await submit();assert.equal(docs.length,before+1);
+ await click('[data-action="file-auto"]');before=docs.length;addFolders([directoryFile('Desconocido/evidencia.pdf')]);await submit();assert($('form-error').textContent.includes('destino explícito'));assert.equal(docs.length,before);$('close-dialog').click();
+ await click('[data-action="file-new-worker"]');set('full_name','Persona Ficticia UI');set('identifier','FICT-01');set('job_title','Técnico ficticio');await submit();assert.equal(workers.length,1);assert.equal(workers[0].full_name,'Persona Ficticia UI');
  await click('[data-view="security"]');assert($('view').textContent.includes('Alertas por correo'));await click('[data-action="email-preferences"]');set('enabled','1');set('days_before','7');await submit();assert(emailPref.enabled);assert.equal(emailPref.days_before,7);assert($('view').textContent.includes('Activadas en tu perfil'));await click('[data-action="email-preview"]');assert($('dialog-detail').textContent.includes('Tareas atrasadas: 3'));assert($('dialog-detail').textContent.includes('no envía correos'));$('close-dialog').click();await click('[data-action="file-logo"]');const logoField=$('edit-form').elements.upload_file;
  Object.defineProperty(logoField,'files',{value:[new w.File(['fictitious PNG'],'fictitious.png',{type:'image/png'})],configurable:true});await submit();
  assert.equal(logoVersion,1);assert.equal($('company-logo').getAttribute('src'),'/ops/branding/logo?v=1');assert(!$('editor').open);

@@ -310,3 +310,55 @@ omite controles documentales ni permite asignaciones fuera del período.
 
 El tutorial y su video de proyectos y servicios explican las tres selecciones,
 la creación y clasificación; solo emplean datos ficticios.
+
+### Carga automática, fechas y vista previa
+
+**Empresa y vehículos → Cargar carpeta automática** recibe una carpeta principal
+y conserva sus subcarpetas como rutas lógicas. El selector **Carpeta** permite
+consultarlas. **Subdivisión por tipo** agrupa lógicamente los documentos por la
+clasificación del contenido, sin duplicar ni mover los originales. La detección usa carpetas explícitas de empresa, patentes registradas
+y coincidencias exactas con nombres completos de trabajadores o proyectos activos.
+No crea identidades ni asigna por similitud. Si falta un trabajador, usa
+**Registrar trabajador**; esto crea la ficha operacional, sin cuentas ni
+invitaciones. Los proyectos se registran desde **Proyectos y servicios**. Una ruta desconocida o ambigua se
+detiene antes de escribir: corregir el destino o usar la selección manual. Los
+destinos resueltos y los reemplazos se muestran juntos para una confirmación previa.
+Se mantienen los límites de 250 archivos, 15 MiB por archivo y 250 MiB por lote.
+
+El perfil local `files` inicia también el servicio **analysis**. Después de escanear
+y cifrar un archivo, un trabajador privado lee el PDF, imagen, DOCX o XLSX sin
+servicios externos. El cuerpo extraído no se guarda en la base de datos ni en
+registros; solo propuestas de tipo y fechas, avisos y confirmaciones. El texto
+temporal se procesa en directorios privados sobre tmpfs, con límites de procesos,
+memoria, CPU, páginas, tamaño y tiempo. Las fórmulas de Excel no se ejecutan.
+Los archivos antiguos también se analizan; cada resultado pertenece a su versión.
+Al reiniciar, un bloqueo exclusivo de trabajador permite retomar solo los análisis
+interrumpidos, sin duplicar archivos ni borrar resultados completos o confirmados.
+
+Una fecha de vencimiento explícita, única y sin contradicciones, cuyo contenido
+confirme también el nombre completo o patente del destino, puede actualizar
+la metadata automáticamente. No se usa la fecha de carga ni se asigna un año de
+vigencia por defecto. OCR, fechas ambiguas o inválidas, documentos extensos,
+lecturas parciales y tipos desconocidos exigen revisión. Un plazo escrito en días
+puede proponerse, pero su cómputo debe confirmarse. Las reglas del proyecto y la
+aprobación documental siguen siendo una verificación separada.
+
+El semáforo usa 30 días de anticipación: rojo para vencidos; amarillo para próximos
+a vencer o casos pendientes; verde solo con fecha aplicada o confirmada y fuera
+de ese plazo. **Fechas y semáforo** muestra propuestas y advertencias y permite
+al editor confirmar contra el original, con motivo y control de versión/revisión.
+Una nueva versión borra la vigencia heredada del archivo anterior y exige un nuevo
+análisis y revisión; las versiones originales permanecen en el historial.
+La pantalla comprueba el avance cada cinco segundos mientras haya análisis pendientes
+visibles, no haya un diálogo abierto y la pestaña esté activa.
+
+**Vista previa** abre páginas PDF renderizadas como imágenes y permite avanzar
+antes de descargar el original. Las imágenes tienen límites de dimensiones; Word
+y Excel se muestran como texto, sin reproducir su diseño ni ejecutar fórmulas.
+Los PDF se consultan por páginas hasta 100; el análisis automático lee hasta 12 y
+marca como parciales los más extensos. Todas las vistas exigen sesión, permisos,
+empresa correcta e integridad del archivo y se sirven sin caché. Una vista previa
+fallida no modifica ni aprueba el documento original.
+
+Las fechas verificadas alimentan los avisos del perfil. El envío de correos sigue
+pendiente de configurar y autorizar con el proveedor corporativo.

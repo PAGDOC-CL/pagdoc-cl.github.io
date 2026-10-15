@@ -20,3 +20,9 @@
 .tutorial-media{margin:16px 0 20px}.tutorial-media video{display:block;width:100%;max-height:46vh;aspect-ratio:16/9;background:#08283e;border-radius:10px}.tutorial-media details{font-size:13px;line-height:1.65;margin:10px 0}.tutorial-media summary{cursor:pointer;font-weight:700}.tutorial-media li{margin:8px 0}
 
 .service-sections{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}.service-kind{display:inline-block;padding:6px 9px;border-radius:6px;font-size:11px;font-weight:800;background:#e5f2ff;color:#185f96;margin-bottom:12px}.service-kind.emergency{background:#ffe6db;color:#973913}.service-kind.project{background:#e6f3ed;color:#1f674b}.service-kind.unclassified{background:#fff1d0;color:#855b08}
+
+.document-page-preview{display:block;max-width:100%;max-height:68vh;object-fit:contain;background:#eef2f6;border:1px solid var(--line);margin:12px auto}.document-text-preview{white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow:auto;padding:16px;background:#f2f5f8;border:1px solid var(--line);font-size:13px;line-height:1.6}
+
+.document-page-preview.zoom{width:100%;max-height:none}
+
+.pill.valid{background:#e1f5e9;color:#176f48}.pill.expiring,.pill.warning{background:#fff1d0;color:#855b08}

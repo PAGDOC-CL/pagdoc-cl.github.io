@@ -31,7 +31,7 @@ case "$task" in
   files-enable)
     "${compose[@]}" exec -T api python private_files.py
     python3 "$local_dir/enable_files.py" "$runtime_env"
-    "${compose[@]}" up --build --detach --wait --wait-timeout 240 api proxy
+    "${compose[@]}" --profile files up --build --detach --wait --wait-timeout 240 api proxy analysis
     echo 'Archivos privados habilitados. Cada carga exige sesión, permisos, CSRF y análisis antimalware.'
     ;;
   provision) "${compose[@]}" exec -e PAGDOC_ALLOW_ADMIN_PROVISIONING=YES api python provision_admin.py ;;

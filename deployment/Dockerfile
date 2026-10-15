@@ -2,7 +2,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /srv/pagdoc
 COPY backend/requirements.lock /tmp/requirements.lock
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata fonts-dejavu-core poppler-utils tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng util-linux && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r /tmp/requirements.lock && useradd --create-home --uid 10001 pagdoc && install -d -m 0700 -o pagdoc -g pagdoc /var/lib/pagdoc-files
 COPY backend /srv/pagdoc/backend
 COPY operacion.html /srv/pagdoc/operacion.html

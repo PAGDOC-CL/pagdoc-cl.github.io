@@ -60,6 +60,8 @@ class User(Base):
     active: Mapped[int] = mapped_column(Integer, default=1)
     mfa_secret_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     mfa_enabled: Mapped[int] = mapped_column(Integer, default=0)
+    password_change_required: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    temporary_password_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserSession(Base):
@@ -223,6 +225,9 @@ def current_user(request: Request, db: Db) -> User:
     user = db.get(User, session.user_id)
     if not user or not user.active or user.tenant_id != session.tenant_id:
         raise HTTPException(401, "Invalid or expired session")
+    if user.password_change_required:
+        if user.temporary_password_expires_at and user.temporary_password_expires_at.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):raise HTTPException(401,'La clave temporal venció. Solicita una nueva o recupera tu acceso por correo.')
+        if request.url.path not in {'/me','/auth/password/change','/auth/logout','/auth/logout-all'}:raise HTTPException(403,{'code':'password_change_required','message':'Debes cambiar tu clave temporal antes de entrar a la plataforma.'})
     from access_policy import planner_path_allowed
     if user.role == "planner" and not planner_path_allowed(request.url.path):
         raise HTTPException(403, "This account is limited to personnel planning")
@@ -324,6 +329,7 @@ class DocumentIn(BaseModel):
 
 
 class UserIn(BaseModel):
+    temporary_password: bool = False
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=12, max_length=1024)
     role: str = Field(pattern="^(admin|editor|viewer|planner|reviewer)$")
@@ -358,6 +364,7 @@ def login(data: Credentials, response: Response, request: Request, db: Db):
         db.commit()
         raise HTTPException(401, "Invalid credentials")
 
+    if user.password_change_required and user.temporary_password_expires_at and user.temporary_password_expires_at.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):raise HTTPException(401,'La clave temporal venció. Solicita una nueva o recupera tu acceso por correo.')
     db.execute(delete(LoginAttempt).where(LoginAttempt.email == email, LoginAttempt.ip_hash == ip_hash))
     session_token = secrets.token_urlsafe(48)
     csrf_token = secrets.token_urlsafe(32)
@@ -369,7 +376,7 @@ def login(data: Credentials, response: Response, request: Request, db: Db):
 
     response.set_cookie("pagdoc_session", session_token, httponly=True, secure=True, samesite="strict", max_age=SESSION_SECONDS, path="/")
     response.set_cookie("pagdoc_csrf", csrf_token, httponly=False, secure=True, samesite="strict", max_age=SESSION_SECONDS, path="/")
-    return {"authenticated": True, "role": user.role, "csrf_token": csrf_token}
+    return {"authenticated": True, "role": user.role, "csrf_token": csrf_token,"password_change_required":bool(user.password_change_required)}
 
 
 @app.post("/auth/logout")
@@ -421,12 +428,12 @@ def mfa_confirm(data: MfaCodeIn, user: Auth, _: Csrf, db: Db):
 
 @app.get("/me")
 def me(user: Auth):
-    return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "role": user.role, "mfa_enabled": bool(user.mfa_enabled), "capabilities": __import__("access_policy").capabilities(user.role)}
+    return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "role": user.role, "mfa_enabled": bool(user.mfa_enabled), "password_change_required":bool(user.password_change_required),"capabilities": __import__("access_policy").capabilities(user.role)}
 
 
 @app.get("/users")
 def users(user: Admin, db: Db):
-    return [{"id": u.id, "email": u.email, "role": u.role, "active": bool(u.active), "mfa_enabled": bool(u.mfa_enabled)} for u in db.scalars(select(User).where(User.tenant_id == user.tenant_id).order_by(User.id)).all()]
+    return [{"id": u.id, "email": u.email, "role": u.role, "active": bool(u.active), "mfa_enabled": bool(u.mfa_enabled),"password_change_required":bool(u.password_change_required),"temporary_password_expires_at":u.temporary_password_expires_at} for u in db.scalars(select(User).where(User.tenant_id == user.tenant_id).order_by(User.id)).all()]
 
 
 @app.post("/users", status_code=201)
@@ -435,7 +442,7 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "Email already registered")
     if not valid_password(data.password):raise HTTPException(422,MESSAGE)
-    created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1)
+    created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1,password_change_required=int(data.temporary_password),temporary_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=24) if data.temporary_password else None)
     db.add(created)
     db.flush()
     add_audit(db, user, "user.create", "user", created.id)
@@ -450,6 +457,8 @@ def reset_user_password(user_id: int, data: PasswordResetIn, user: AdminWrite, d
         raise HTTPException(404, "User not found")
     if not valid_password(data.password):raise HTTPException(422,MESSAGE)
     target.password_hash = hasher.hash(data.password)
+    target.password_change_required=1
+    target.temporary_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=24)
     revoke_user_sessions(db, target.id)
     add_audit(db, user, "user.password_reset", "user", target.id)
     db.commit()

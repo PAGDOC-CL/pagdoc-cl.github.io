@@ -129,3 +129,60 @@ def test_invalid_payload_does_not_echo_secret_inputs(client):
     marker='short-fictitious-only'
     result=client.post('/auth/password/reset',json={'token':marker,'new_password':'x'})
     assert result.status_code==422 and marker not in result.text
+
+
+def test_temporary_password_is_one_time_display_scoped_and_forces_change(client,delivery):
+    login(client,5)
+    old_session=client.cookies.get('pagdoc_session')
+    login(client,1)
+    assert client.post('/users/1/temporary-password',json={}).status_code==409
+    assert client.post('/users/2/temporary-password',json={}).status_code==404
+    csrf=client.headers.pop('X-PAGDOC-CSRF')
+    assert client.post('/users/5/temporary-password',json={}).status_code==403
+    client.headers['X-PAGDOC-CSRF']=csrf
+    result=client.post('/users/5/temporary-password',json={})
+    assert result.status_code==200,result.text
+    temporary=result.json()['temporary_password'];assert valid_password(temporary)
+    assert result.headers['cache-control']=='no-store'
+    users=client.get('/users').json();assert temporary not in str(users)
+    assert next(u for u in users if u['id']==5)['password_change_required']
+    with core.SessionLocal() as db:
+        user=db.get(core.User,5);assert user.password_hash!=temporary and core.hasher.verify(temporary,user.password_hash)
+        assert temporary not in str([(a.action,a.target_id) for a in db.scalars(select(core.Audit)).all()])
+    client.cookies.clear();client.cookies.set('pagdoc_session',old_session)
+    assert client.get('/me').status_code==401
+    result=client.post('/auth/login',json={'email':'u5@example.invalid','password':temporary});assert result.status_code==200 and result.json()['password_change_required']
+    client.headers['X-PAGDOC-CSRF']=result.json()['csrf_token']
+    for path in ['/ops/bootstrap','/documents','/ops/services','/users']:
+        result=client.get(path);assert result.status_code==403 and result.json()['detail']['code']=='password_change_required'
+    assert client.get('/me').json()['password_change_required']
+    assert client.post('/auth/password/change',json={'current_password':temporary,'new_password':NEW}).status_code==200
+    assert client.post('/auth/login',json={'email':'u5@example.invalid','password':temporary}).status_code==401
+    result=client.post('/auth/login',json={'email':'u5@example.invalid','password':NEW});assert result.status_code==200 and not result.json()['password_change_required']
+    assert client.get('/ops/bootstrap').status_code==200 and not delivery
+
+
+def test_temporary_password_expiry_and_reissue(client):
+    login(client)
+    first=client.post('/users/5/temporary-password',json={}).json()['temporary_password']
+    second=client.post('/users/5/temporary-password',json={}).json()['temporary_password']
+    assert first!=second
+    assert client.post('/auth/login',json={'email':'u5@example.invalid','password':first}).status_code==401
+    with core.SessionLocal() as db:
+        db.get(core.User,5).temporary_password_expires_at=passwords.now()-timedelta(seconds=1);db.commit()
+    assert client.post('/auth/login',json={'email':'u5@example.invalid','password':second}).status_code==401
+    with core.SessionLocal() as db:db.get(core.User,5).active=0;db.commit()
+    assert client.post('/users/5/temporary-password',json={}).status_code==409
+    login(client,4);assert client.post('/users/5/temporary-password',json={}).status_code==403
+
+
+def test_new_temporary_account_and_email_recovery_finish_requirement(client,delivery):
+    login(client)
+    response=client.post('/users',json={'email':'temporary@example.invalid','password':NEW,'role':'planner','temporary_password':True})
+    assert response.status_code==201
+    response=client.post('/auth/login',json={'email':'temporary@example.invalid','password':NEW});assert response.json()['password_change_required']
+    token=request_token(client,delivery,'temporary@example.invalid')
+    assert client.post('/auth/password/reset',json={'token':token,'new_password':'Changed-Fictitious42!'}).status_code==200
+    response=client.post('/auth/login',json={'email':'temporary@example.invalid','password':'Changed-Fictitious42!'})
+    assert not response.json()['password_change_required']
+    assert client.get('/ops/bootstrap').status_code==200

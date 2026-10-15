@@ -82,6 +82,7 @@ def recovery_url():
 
 
 def close_sessions(db,user,response,action):
+    user.password_change_required=0;user.temporary_password_expires_at=None
     core.revoke_user_sessions(db,user.id)
     db.execute(update(PasswordRecovery).where(PasswordRecovery.user_id==user.id,PasswordRecovery.used_at.is_(None)).values(used_at=now()))
     core.add_audit(db,user,action,'user',user.id);db.commit()
@@ -152,3 +153,20 @@ def recover(data:RecoverIn,request:Request,response:Response,db:core.Db):
     if core.hasher.verify(data.new_password,user.password_hash):raise HTTPException(422,'Elige una contraseña diferente de la actual.')
     user.password_hash=core.hasher.hash(data.new_password)
     return close_sessions(db,user,response,'auth.password_recovered')
+
+
+
+@core.app.post('/users/{user_id}/temporary-password')
+def temporary_password(user_id:int,user:core.AdminWrite,db:core.Db):
+    if user_id==user.id:raise HTTPException(409,'Para tu propia cuenta usa Cambiar mi contraseña en Mi seguridad.')
+    target=db.scalar(select(core.User).where(core.User.id==user_id,core.User.tenant_id==user.tenant_id).with_for_update())
+    if target is None:raise HTTPException(404,'Usuario no disponible.')
+    if not target.active:raise HTTPException(409,'Activa el usuario antes de generar una clave temporal.')
+    # Guaranteed policy compliance, with 192 random bits; the cleartext is returned once.
+    password=secrets.token_urlsafe(24)+'Aa1!'
+    target.password_hash=core.hasher.hash(password);target.password_change_required=1
+    target.temporary_password_expires_at=now()+timedelta(hours=24)
+    core.revoke_user_sessions(db,target.id)
+    db.execute(update(PasswordRecovery).where(PasswordRecovery.user_id==target.id,PasswordRecovery.used_at.is_(None)).values(used_at=now()))
+    core.add_audit(db,user,'user.temporary_password_created','user',target.id);db.commit()
+    return {'id':target.id,'email':target.email,'temporary_password':password,'expires_at':target.temporary_password_expires_at,'password_change_required':True,'sessions_revoked':True}

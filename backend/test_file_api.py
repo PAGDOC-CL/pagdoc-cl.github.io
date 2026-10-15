@@ -521,3 +521,43 @@ def test_nested_worker_folders_use_main_person_and_warn_without_merging(files):
     with core.SessionLocal() as db:
         root=db.scalar(select(core.Worker).where(core.Worker.full_name=='Persona Ficticia P'));root.active=0;db.commit()
     assert c.post('/ops/files/batch/destinations',json={'paths':[paths[0]]}).json()['items'][0]['status']=='review'
+
+
+def test_worker_conflict_requires_explicit_scoped_active_choice(files):
+    c,_,_=files
+    with core.SessionLocal() as db:
+        alias=core.Worker(tenant_id=1,full_name='Persona Ficticia',active=1)
+        other=core.Worker(tenant_id=1,full_name='Ajena Ficticia',active=1)
+        db.add_all([alias,other]);db.commit();alias_id=alias.id;other_id=other.id
+    scope='02_TRABAJADORES/Persona Ficticia P/Persona Ficticia'
+    paths=[scope+'/Curriculum Vitae/cv.pdf',scope+'/Certificado de Estudios/a.pdf']
+    def detect(choice=None):
+        body={'paths':paths}
+        if choice is not None:body['worker_choices']={scope:choice}
+        return c.post('/ops/files/batch/destinations',json=body).json()['items']
+    pending=detect()
+    assert all(item['status']=='review' for item in pending)
+    assert pending[0]['worker_conflict']['scope']==scope
+    assert {option['worker_id'] for option in pending[0]['worker_conflict']['options']}=={0,alias_id}
+    for invalid in [other_id,2,999999]:
+        assert all(item['status']=='review' for item in detect(invalid))
+        assert c.post('/ops/files/batch/subjects',json={'paths':paths,'worker_choices':{scope:invalid},'confirmed':True}).status_code==409
+    assert all(item['worker_id']==alias_id for item in detect(alias_id))
+    assert all('Destino elegido' in item['hierarchy_warning'] for item in detect(alias_id))
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'worker_choices':{scope:alias_id},'confirmed':True}).json()['created_count']==0
+    assert all(item['status']=='worker_missing' for item in detect(0))
+    result=c.post('/ops/files/batch/subjects',json={'paths':paths,'worker_choices':{scope:0},'confirmed':True})
+    assert result.status_code==200,result.text
+    assert result.json()['created_count']==1
+    root_id=result.json()['created'][0]['id']
+    assert all(item['worker_id']==root_id for item in detect(0))
+    assert all(item['worker_id']==root_id for item in detect(root_id))
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'worker_choices':{scope:0},'confirmed':True}).json()['created_count']==0
+    assert all(item['status']=='review' for item in detect())
+    with core.SessionLocal() as db:
+        db.get(core.Worker,alias_id).active=0;db.commit()
+    assert all(item['status']=='review' for item in detect(alias_id))
+    assert all(item['worker_id']==root_id for item in detect(root_id))
+    assert c.post('/ops/files/batch/destinations',json={'paths':paths,'worker_choices':{scope:-1}}).status_code==422
+    login(c,2)
+    assert all(item['status']=='worker_missing' for item in detect(alias_id))

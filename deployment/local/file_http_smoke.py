@@ -195,6 +195,23 @@ with request('/ops/files/batch/destinations',{'paths':nested_worker_paths}) as r
     routed=json.load(response)['items'];assert all(item['status']=='resolved' for item in routed);assert routed[0]['worker_id']==routed[1]['worker_id'];assert routed[0]['hierarchy_warning']
 print('OK: nested worker categories retain their main person, with explicit alias review and no extra identities.')
 
+with request('/workers',{'full_name':'Persona Ficticia'}) as response:alias_id=json.load(response)['id']
+with request('/ops/files/batch/destinations',{'paths':nested_worker_paths}) as response:
+    pending=json.load(response)['items'];assert pending[0]['status']=='review';assert pending[1]['status']=='resolved';scope=pending[0]['worker_conflict']['scope']
+choices={scope:routed[0]['worker_id']}
+with request('/ops/files/batch/destinations',{'paths':nested_worker_paths,'worker_choices':choices}) as response:
+    chosen=json.load(response)['items'];assert all(item['status']=='resolved' and item['worker_id']==routed[0]['worker_id'] for item in chosen)
+with request('/ops/files/batch/subjects',{'paths':nested_worker_paths,'worker_choices':choices,'confirmed':True}) as response:assert json.load(response)['created_count']==0
+worker_entry={'path':nested_worker_paths[0],'subject_kind':'worker','worker_id':chosen[0]['worker_id'],'sha256':hashlib.sha256(content).hexdigest()}
+with request('/ops/files/batch/preview',{'entries':[worker_entry]}) as response:assert json.load(response)['items'][0]['status']=='new'
+worker_query={'path':worker_entry['path'],'subject_kind':'worker','worker_id':worker_entry['worker_id'],'expected_version':0}
+with request('/ops/files/batch/item?'+urlencode(worker_query),content,'application/pdf') as response:worker_doc=json.load(response)['document_id']
+with request('/ops/files/documents?worker_id='+str(worker_entry['worker_id'])) as response:
+    worker_page=json.load(response);assert any(doc['id']==worker_doc and doc['title']==worker_entry['path'] for doc in worker_page['items'])
+with request('/ops/files/documents?worker_id='+str(alias_id)) as response:assert json.load(response)['total']==0
+print('OK: explicit nested worker conflict selection, no extra identities or merges, and correctly scoped HTTPS upload.')
+
+
 with request('/ops/files/documents',{'title':'Fictitious 30-day drug report','subject_kind':'company'}) as response:drug_id=json.load(response)['id']
 with request(f'/ops/files/documents/{drug_id}/versions?file_name=drug-report.pdf&expected_version=0',readable_pdf(drug=True),'application/pdf') as response:assert json.load(response)['version']==1
 for attempt in range(45):

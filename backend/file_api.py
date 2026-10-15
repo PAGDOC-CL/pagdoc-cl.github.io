@@ -551,15 +551,17 @@ async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, pa
 class DestinationRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
     paths:list[str]=Field(min_length=1,max_length=250)
+    worker_choices:dict[Annotated[str,Field(max_length=1024)],Annotated[int,Field(strict=True,ge=0)]]=Field(default_factory=dict,max_length=250)
 
 
 @core.app.post('/ops/files/batch/destinations')
 def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
     require_enabled()
-    return destination_proposals(data.paths,user,db)
+    return destination_proposals(data.paths,user,db,data.worker_choices)
 
 
-def destination_proposals(paths,user,db):
+def destination_proposals(paths,user,db,worker_choices=None):
+    worker_choices=worker_choices or {}
     vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==user.tenant_id)).all()
     workers=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id)).all()
     projects=db.scalars(select(core.Project).where(core.Project.tenant_id==user.tenant_id,core.Project.active==1)).all()
@@ -582,30 +584,50 @@ def destination_proposals(paths,user,db):
         person_candidates={}
         person_parts=[]
         workforce_seen=False
-        for segment in folders.split('/'):
+        folder_parts=folders.split('/')
+        for position,segment in enumerate(folder_parts):
             words=clean_name(segment).split()
             if re.search(r'trabajador|personal|colaborador',clean_name(segment)):
                 workforce_seen=True
             # A one-letter final initial is valid; category folders are not people.
             if workforce_seen and 2<=len(words)<=7 and not any(word in excluded or any(c.isdigit() for c in word) for word in words) and all(len(word)>=2 for word in words[:2]) and len(segment)<=150:
-                person_parts.append((clean_name(segment),' '.join(segment.replace('_',' ').split())))
+                person_parts.append((clean_name(segment),' '.join(segment.replace('_',' ').split()),'/'.join(folder_parts[:position+1])))
         hierarchy_warning=None
         if person_parts:
-            root_key,root_name=person_parts[0]
+            root_key,root_name,_=person_parts[0]
             person_candidates[root_key]=root_name
-            aliases=sorted({name for key,name in person_parts[1:] if key!=root_key})
+            aliases=sorted({name for key,name,_ in person_parts[1:] if key!=root_key})
             if aliases:
                 hierarchy_warning=f'Carpeta principal: {root_name}. Subcarpetas con otro nombre: '+', '.join(aliases)+'. Confirma que sus documentos pertenecen a la persona de la carpeta principal; el nombre de carpeta no verifica identidad.'
             # Never silently combine an existing different identity or an inactive root.
-            descendant_keys={key for key,_ in person_parts[1:] if key!=root_key}
+            descendant_keys={key for key,_,_ in person_parts[1:] if key!=root_key}
             conflicting_workers=[w for w in workers if clean_name(w.full_name) in descendant_keys]
             matched_workers=[w for w in workers if clean_name(w.full_name)==root_key]
         else:
             conflicting_workers=[]
         company=bool(re.search(r'\bempresa\b|\bcompany\b',normalized))
         worker=bool(re.search(r'trabajador|personal|colaborador',normalized))
+        conflict=None
+        if conflicting_workers and worker and not company and not matched and not plates and len(matched_projects)<=1:
+            conflict_keys={clean_name(w.full_name) for w in conflicting_workers}
+            scope=next(part_path for key,_,part_path in person_parts[1:] if key in conflict_keys)
+            candidates={w.id:w for w in [*matched_workers,*conflicting_workers]}
+            options=[{'worker_id':w.id,'name':w.full_name,'identifier':w.identifier,'active':bool(w.active)} for w in candidates.values()]
+            if not matched_workers:options.insert(0,{'worker_id':0,'name':root_name,'identifier':None,'active':True,'create':True})
+            choice=worker_choices.get(scope)
+            selected=candidates.get(choice)
+            if choice==0 and len(matched_workers)<=1 and (not matched_workers or matched_workers[0].active):
+                conflicting_workers=[]
+                selected_name=root_name
+            elif selected is not None and selected.active:
+                matched_workers=[selected];conflicting_workers=[];selected_name=selected.full_name
+            else:
+                conflict={'scope':scope,'options':options}
+            if not conflicting_workers:
+                hierarchy_warning=f'Destino elegido explícitamente para {scope}: {selected_name}. Se conservan las rutas originales; no se fusionan fichas ni se trasladan documentos existentes.'
         if conflicting_workers:
-            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Una subcarpeta corresponde a otra persona ya registrada. Se requiere separar sus documentos antes de asignarlos.'}
+            result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Hay nombres de personas ya registradas en la misma rama. Selecciona el destinatario de sus documentos; no se fusionan las fichas.'}
+            if conflict:result['worker_conflict']=conflict
         elif len(matched_workers)==1 and matched_workers[0].active and not matched and not company and len(matched_projects)<=1:
             result={'path':path,'status':'resolved','subject_kind':'worker','worker_id':matched_workers[0].id,'vehicle_id':None,'project_id':matched_projects[0].id if matched_projects else None,'subject_name':matched_workers[0].full_name}
         elif len(matched_projects)==1 and not matched and not matched_workers and not company and not worker:
@@ -636,7 +658,7 @@ def register_folder_vehicles(data:RegisterFolderVehicles,user:core.Editor,db:cor
     require_enabled()
     # Serialize with manual registration; retries reuse the tenant's exact plate.
     db.scalar(select(core.Tenant).where(core.Tenant.id==user.tenant_id).with_for_update())
-    proposals=destination_proposals(data.paths,user,db)['items']
+    proposals=destination_proposals(data.paths,user,db,data.worker_choices)['items']
     if any(item['status']=='review' for item in proposals):
         raise HTTPException(409,'Hay destinos ambiguos o vehículos inactivos. No se crearon fichas en este grupo.')
     pending={item['proposed_plate']:item for item in proposals if item['status']=='vehicle_missing'}
@@ -654,7 +676,7 @@ def register_folder_vehicles(data:RegisterFolderVehicles,user:core.Editor,db:cor
 def register_folder_subjects(data:RegisterFolderVehicles,user:core.Editor,db:core.Db):
     require_enabled()
     db.scalar(select(core.Tenant).where(core.Tenant.id==user.tenant_id).with_for_update())
-    proposals=destination_proposals(data.paths,user,db)['items']
+    proposals=destination_proposals(data.paths,user,db,data.worker_choices)['items']
     if any(item['status']=='review' for item in proposals):raise HTTPException(409,'Hay destinos ambiguos o inactivos. No se crearon fichas en este grupo.')
     pending={('worker',item['proposed_worker_key']) if item['status']=='worker_missing' else ('vehicle',item['proposed_plate']):item for item in proposals if item['status'] in {'vehicle_missing','worker_missing'}}
     created=[]

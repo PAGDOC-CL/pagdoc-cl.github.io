@@ -10,7 +10,7 @@ const names={overview:'Mi operación',services:'Proyectos y servicios',planning:
 let me=null,data={},view='overview',month=new Date(new Date().getFullYear(),new Date().getMonth(),1,12),personFilter='all',reviewFilter='all',modalKind='',modalId=null,preview=null,busy=false;
 let guideIndex=0,guideLessons=null,serviceSection='projects',serviceProject='all';
 const serviceKinds={project:'Proyecto',emergency:'Servicio de emergencia',scheduled:'Servicio programado',unclassified:'Pendiente de clasificar'};
-let fileOffset=0,fileFilter='all',fileFolder='',fileBrowse=true,fileDestination='',fileType='',batchLocked=false,batchFiles=[],batchVehicleMap=new Map(),batchPlan=null,batchRegistration=null;
+let fileOffset=0,fileFilter='all',fileFolder='',fileBrowse=true,fileDestination='',fileType='',batchLocked=false,batchFiles=[],batchVehicleMap=new Map(),batchPlan=null,batchRegistration=null,batchWorkerChoices=new Map();
 const documentTypeOptions=[['alcohol_drogas','Examen de alcohol y drogas'],['examen_ocupacional','Examen ocupacional'],['revision_tecnica','Revisión técnica'],['permiso_circulacion','Permiso de circulación'],['antecedentes','Certificado de antecedentes'],['procedimiento','Procedimiento'],['checklist','Lista de verificación'],['contrato','Contrato o anexo'],['cotizaciones','Cotizaciones previsionales'],['certificado','Certificado']];
 const originalBrand=document.querySelector('#shell .brand').innerHTML;
 let demoRole='admin';const demoKey='pagdoc-operations-demo-v2';let model;
@@ -257,7 +257,7 @@ function addBatchFiles(files){
  batchFiles.push(...selected);renderBatchSelection();
 }
 function renderBatchSelection(){
- batchPlan=null;batchRegistration=null;$('batch-warning').replaceChildren();
+ batchPlan=null;batchRegistration=null;batchWorkerChoices.clear();$('batch-warning').replaceChildren();
  const form=$('edit-form'),groups=batchGroups(),kind=form.elements.subject_kind.value,vehicleMode=kind==='vehicle',single=form.elements.vehicle_id;
  form.elements.confirm_destination.required=kind!=='auto';form.elements.confirm_destination.closest('label').hidden=kind==='auto';
  if(form.elements.worker_id){form.elements.worker_id.disabled=kind!=='worker';form.elements.worker_id.required=kind==='worker';if(kind!=='worker')form.elements.worker_id.value='0';}if(form.elements.project_id)form.elements.project_id.required=kind==='project';
@@ -265,10 +265,15 @@ function renderBatchSelection(){
  const assignments=vehicleMode&&groups.length>1?`<p class="help">Asigna explícitamente un vehículo a cada carpeta. No se deducen patentes ni se fusionan vehículos por el nombre de carpeta.</p>${groups.map((group,i)=>`<label>${esc(group)}<select name="folder_vehicle_${i}" data-batch-group="${i}"><option value="0">Seleccionar vehículo para esta carpeta</option>${data.fileSubjects.vehicles.map(v=>`<option value="${v.id}" ${batchVehicleMap.get(group)===v.id?'selected':''}>${esc((v.plate||'Sin patente')+' · '+v.label)}</option>`).join('')}</select></label>`).join('')}`:'';
  $('batch-preview').innerHTML=`<p class="help">${batchFiles.length} archivos · ${groups.length} grupos de origen · ${(batchFiles.reduce((n,e)=>n+e.file.size,0)/1048576).toFixed(1)} MiB</p>${assignments}<ul class="batch-list">${batchFiles.map((entry,i)=>`<li>${esc(entry.path)} <button type="button" class="secondary" data-batch-remove="${i}" aria-label="Quitar ${esc(entry.path)}">Quitar</button></li>`).join('')}</ul>`;
 }
+function batchDestinationPayload(entries){
+ const paths=entries.map(entry=>entry.path);
+ return {paths,worker_choices:Object.fromEntries([...batchWorkerChoices].filter(([scope])=>paths.some(path=>path.startsWith(scope+'/'))))};
+}
 async function saveBatchFiles(p){
  const form=$('edit-form'),entries=[...batchFiles],groups=batchGroups();
  if(batchLocked)fail('Este lote ya se procesó. Cierra y revisa la lista antes de continuar.',409);
  if(!entries.length||entries.length>3000)fail('Selecciona entre 1 y 3000 archivos o añade carpetas.',422);
+ for(const select of form.querySelectorAll('[data-worker-choice]')){if(select.value==='')batchWorkerChoices.delete(select.dataset.workerChoice);else batchWorkerChoices.set(select.dataset.workerChoice,Number(select.value));}
  const vehicleFor=entry=>groups.length>1?batchVehicleMap.get(entry.group):p.vehicle_id;
  if(p.subject_kind==='vehicle')for(const entry of entries)if(!data.fileSubjects.vehicles.some(v=>v.id===vehicleFor(entry)))fail('Selecciona un vehículo válido para cada carpeta: '+entry.group,422);
  if(p.subject_kind!=='auto'&&!form.elements.confirm_destination.checked)fail('Confirma el destino de los archivos.',422);
@@ -277,16 +282,19 @@ async function saveBatchFiles(p){
 
  if(!batchPlan){
   $('save').textContent='Comprobando archivos existentes…';
-  let detected=null;if(p.subject_kind==='auto'){detected=[];for(let offset=0;offset<entries.length;offset+=250){$('save').textContent=`Detectando destinos ${offset+1}–${Math.min(offset+250,entries.length)} de ${entries.length}…`;detected.push(...(await request('/ops/files/batch/destinations','POST',{paths:entries.slice(offset,offset+250).map(entry=>entry.path)})).items);}if(detected.length!==entries.length||detected.some((item,index)=>item.path!==entries[index].path))fail('La detección no corresponde a la selección actual.',409);const unresolved=detected.filter(item=>!['resolved','vehicle_missing','worker_missing'].includes(item.status));if(unresolved.length){const folders=[...new Set(unresolved.map(item=>item.path.slice(0,item.path.lastIndexOf('/'))+' ('+(item.reason||'Requiere revisión del destino')+')'))];fail('Revisa '+folders.length+' carpetas con destino ambiguo o inactivo: '+folders.slice(0,10).join('; ')+'. No se ha cargado ningún archivo de este lote.',422);}
+  let detected=null;if(p.subject_kind==='auto'){detected=[];for(let offset=0;offset<entries.length;offset+=250){$('save').textContent=`Detectando destinos ${offset+1}–${Math.min(offset+250,entries.length)} de ${entries.length}…`;detected.push(...(await request('/ops/files/batch/destinations','POST',batchDestinationPayload(entries.slice(offset,offset+250)))).items);}if(detected.length!==entries.length||detected.some((item,index)=>item.path!==entries[index].path))fail('La detección no corresponde a la selección actual.',409);const unresolved=detected.filter(item=>!['resolved','vehicle_missing','worker_missing'].includes(item.status));
+   const conflicts=[...new Map(unresolved.filter(item=>item.worker_conflict).map(item=>[item.worker_conflict.scope,item.worker_conflict])).values()];
+   if(conflicts.length){batchRegistration=null;$('batch-warning').innerHTML=`<div class="banner"><b>Selecciona a quién pertenecen los documentos de estas ramas.</b><p>La carpeta principal y una subcarpeta coinciden con fichas diferentes. Revisa los originales y elige una persona por rama. Esta elección no fusiona fichas ni cambia documentos existentes; después confirmarás los destinos y reemplazos.</p>${conflicts.map(conflict=>`<label>${esc(conflict.scope)}<select data-worker-choice="${esc(conflict.scope)}"><option value="">Seleccionar trabajador correcto</option>${conflict.options.map(option=>`<option value="${option.worker_id}" ${!option.active?'disabled':''}>${esc(option.name+(option.identifier?' · '+option.identifier:'')+(option.create?' · crear ficha':` · ficha #${option.worker_id}`)+(!option.active?' · inactivo':''))}</option>`).join('')}</select></label>`).join('')}</div>`;if(unresolved.every(item=>item.worker_conflict))return {awaitingReplacement:true};}
+   if(unresolved.length){const folders=[...new Set(unresolved.map(item=>item.path.slice(0,item.path.lastIndexOf('/'))+' ('+(item.reason||'Requiere revisión del destino')+')'))];fail('Revisa '+folders.length+' carpetas con destino ambiguo o inactivo: '+folders.slice(0,10).join('; ')+'. No se ha cargado ningún archivo de este lote.',422);}
    const hierarchyWarnings=[...new Set(detected.map(item=>item.hierarchy_warning).filter(Boolean))];
    const hierarchyNotice=hierarchyWarnings.length?`<p><b>Revisión de nombres dentro de las carpetas:</b></p><ul>${hierarchyWarnings.map(message=>`<li>${esc(message)}</li>`).join('')}</ul>`:'';
    const missing=[...new Map(detected.filter(item=>['vehicle_missing','worker_missing'].includes(item.status)).map(item=>[item.status+':'+(item.proposed_plate||item.proposed_worker_key),item])).values()];
    if(missing.length){
     if(!batchRegistration){batchRegistration=missing;$('batch-warning').innerHTML=`<div class="banner"><b>Se crearán ${missing.length} fichas de trabajadores y vehículos detectados en las carpetas.</b><ul class="batch-list">${missing.map(item=>`<li><b>${esc(item.proposed_plate||item.proposed_worker_name)}</b> · ${esc(item.path.slice(0,item.path.lastIndexOf('/')))}</li>`).join('')}</ul>${hierarchyNotice}<p>Se reutilizan las patentes e identidades ya registradas. Confirma que los nombres correspondan a las personas correctas. No se crean cuentas de acceso ni acreditaciones. Después revisarás los destinos y los reemplazos antes de subir documentos.</p><label><span><input type="checkbox" name="confirm_vehicles"> Confirmo las personas de las carpetas principales, sus subcarpetas y la creación de las fichas mostradas.</span></label></div>`;return {awaitingReplacement:true};}
     if(!form.elements.confirm_vehicles?.checked)fail('Confirma las fichas detectadas para continuar.',422);
-    for(let offset=0;offset<entries.length;offset+=250){$('save').textContent='Registrando fichas operacionales…';await request(missing.some(item=>item.status==='worker_missing')?'/ops/files/batch/subjects':'/ops/files/batch/vehicles','POST',{paths:entries.slice(offset,offset+250).map(entry=>entry.path),confirmed:true});}
+    for(let offset=0;offset<entries.length;offset+=250){$('save').textContent='Registrando fichas operacionales…';await request(missing.some(item=>item.status==='worker_missing')?'/ops/files/batch/subjects':'/ops/files/batch/vehicles','POST',{...batchDestinationPayload(entries.slice(offset,offset+250)),confirmed:true});}
     data.fileSubjects=await request('/ops/files/subjects');detected=[];
-    for(let offset=0;offset<entries.length;offset+=250)detected.push(...(await request('/ops/files/batch/destinations','POST',{paths:entries.slice(offset,offset+250).map(entry=>entry.path)})).items);
+    for(let offset=0;offset<entries.length;offset+=250)detected.push(...(await request('/ops/files/batch/destinations','POST',batchDestinationPayload(entries.slice(offset,offset+250)))).items);
     if(detected.length!==entries.length||detected.some((item,index)=>item.path!==entries[index].path||item.status!=='resolved')){batchRegistration=null;fail('Las fichas creadas se conservaron. Revisa los destinos pendientes antes de subir archivos.',409);}batchRegistration=null;
    }
   }

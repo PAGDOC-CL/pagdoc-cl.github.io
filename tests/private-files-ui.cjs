@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.resolve(__dirname,'..'),errors=[],calls=[],downloads=[];
 const docs=[],workers=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
-let onboardingSeen=false;
+let onboardingSeen=false,allIdentical=false;
 let signedIn=false,rejectUpload=false,logoVersion=0,rejectName='';const previewHashes=new Map();
 const me={id:1,email:'admin@example.invalid',role:'admin',capabilities:['plan.read','plan.write','documents.read','documents.write','documents.review','tasks.read','tasks.write','users.manage']};
 let emailPref={enabled:false,days_before:30,include_expiring:true,include_expired:true,include_overdue:true};
@@ -36,10 +36,11 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
     body={status:doc.analysis?.status||'review',version:doc.version,document_type:'certificado',type_label:'Certificado',issued_on:'2026-10-15',proposed_expires_on:'2027-10-15',expires_on:doc.expires_on,traffic_light:doc.analysis?.traffic_light||'warning',warnings:['Confirmar lectura ficticia']};
    }
    else if(/\/ops\/files\/documents\/\d+\/versions\/\d+\/preview$/.test(url.pathname))body={kind:'pdf',pages:2,name:'fictitious.pdf'};
-   else if(url.pathname==='/ops/files/status')body={enabled:true,ready_for_upload:true,max_bytes:15*1024*1024};
+   else if(url.pathname==='/ops/files/status')body={enabled:true,ready_for_upload:true,max_bytes:50*1024*1024};
    else if(url.pathname==='/ops/files/subjects')body={company:'Fictitious Company',vehicles};
    else if(url.pathname==='/ops/files/batch/preview'){
-    body={items:payload.entries.map(entry=>{const key=entry.subject_kind+':'+entry.vehicle_id+':'+entry.path;previewHashes.set(key,entry.sha256);const doc=docs.find(doc=>doc.title===entry.path&&doc.subject_kind===entry.subject_kind&&doc.vehicle_id===entry.vehicle_id);return {...entry,subject_name:'Fictitious subject',document_id:doc?.id||null,expected_version:doc?.version||0,status:doc?(doc.sha256===entry.sha256?'identical':doc.version?'replace':'resume'):'new'};})};
+    assert(payload.entries.length<=250,'Metadata is checked in bounded chunks');
+    body={items:payload.entries.map(entry=>{const key=entry.subject_kind+':'+entry.vehicle_id+':'+entry.path;previewHashes.set(key,entry.sha256);const doc=docs.find(doc=>doc.title===entry.path&&doc.subject_kind===entry.subject_kind&&doc.vehicle_id===entry.vehicle_id);return {...entry,subject_name:'Fictitious subject',document_id:doc?.id||null,expected_version:doc?.version||0,status:allIdentical?'identical':doc?(doc.sha256===entry.sha256?'identical':doc.version?'replace':'resume'):'new'};})};
    }else if(url.pathname==='/ops/files/batch/item'){
     assert(options.body instanceof w.File);assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');
     const path=url.searchParams.get('path'),kind=url.searchParams.get('subject_kind'),vehicle=kind==='vehicle'?+url.searchParams.get('vehicle_id'):null;
@@ -122,7 +123,8 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  addFolders([directoryFile('Fleet/Folder-A/registration.pdf'),directoryFile('Fleet/Folder-B/registration.pdf')]);assert($('edit-form').elements.vehicle_id.disabled);before=docs.length;$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before);assert($('form-error').textContent.includes('cada carpeta'));
  set('folder_vehicle_0','1');set('folder_vehicle_1','2');assert(!$('edit-form').elements.confirm_destination.checked);$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before+2);assert.deepEqual(docs.slice(-2).map(d=>d.vehicle_id),[1,2]);
  await click('[data-action="file-batch"]');addFolders(Array.from({length:51},(_,i)=>directoryFile('Company/Archive/fictitious-'+i+'.pdf')));before=docs.length;$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before+51);assert($('message').textContent.includes('51 archivos guardados'));
- await click('[data-action="file-batch"]');before=docs.length;addFolders(Array.from({length:251},(_,i)=>directoryFile('Company/Large/fictitious-'+i+'.pdf')));assert($('form-error').textContent.includes('250'));assert($('batch-preview').textContent.includes('0 archivos'));assert.equal(docs.length,before);$('close-dialog').click();
+ await click('[data-action="file-batch"]');before=docs.length;addFolders(Array.from({length:3001},(_,i)=>directoryFile('Company/Large/fictitious-'+i+'.pdf')));assert($('form-error').textContent.includes('3000'));assert($('batch-preview').textContent.includes('0 archivos'));assert.equal(docs.length,before);$('close-dialog').click();
+ await click('[data-action="file-batch"]');allIdentical=true;before=docs.length;const preflightBefore=calls.filter(call=>call.route.includes('/batch/preview')).length;addFolders(Array.from({length:3000},(_,i)=>directoryFile('Company/Scale/fictitious-'+i+'.pdf')));assert($('batch-preview').textContent.includes('3000 archivos'));$('edit-form').elements.confirm_destination.checked=true;await submit();assert.equal(docs.length,before);assert($('message').textContent.includes('3000 idénticos omitidos'));assert.equal(calls.filter(call=>call.route.includes('/batch/preview')).length-preflightBefore,12);allIdentical=false;
  await click('[data-action="file-auto"]');assert.equal($('edit-form').elements.subject_kind.value,'auto');before=docs.length;addFolders([directoryFile('Empresa/Certificados/automatico.pdf')]);await submit();assert.equal(docs.length,before);assert($('batch-warning').textContent.includes('Destinos detectados'));$('edit-form').elements.confirm_replacements.checked=true;await submit();assert.equal(docs.length,before+1);
  await click('[data-action="file-auto"]');before=docs.length;addFolders([directoryFile('Desconocido/evidencia.pdf')]);await submit();assert($('form-error').textContent.includes('destino explícito'));assert.equal(docs.length,before);$('close-dialog').click();
  await click('[data-action="file-new-worker"]');set('full_name','Persona Ficticia UI');set('identifier','FICT-01');set('job_title','Técnico ficticio');await submit();assert.equal(workers.length,1);assert.equal(workers[0].full_name,'Persona Ficticia UI');

@@ -214,7 +214,7 @@ async def receive_file_body(request, file_name):
     except ValueError:
         raise HTTPException(400, 'Tamaño de carga inválido.')
     if declared < 0 or declared > MAX_BYTES:
-        raise HTTPException(413, 'El límite por archivo es de 15 MiB.')
+        raise HTTPException(413, f'El límite por archivo es de {MAX_BYTES / 1048576:g} MiB.')
     payload = bytearray()
     try:
         async with asyncio.timeout(60):

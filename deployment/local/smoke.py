@@ -26,6 +26,7 @@ with urlopen(request,context=context,timeout=15) as response:
 with urlopen(Request(origin+'/ops/bootstrap',headers={'Cookie':cookie_header}),context=context,timeout=15) as response:
     payload=json.load(response)
     assert payload['me']['email']=='private-pilot@example.invalid'
+    assert payload['tenant']['name']=='Fictitious private CI tenant'
 with urlopen(Request(origin+'/ops/integrations',headers={'Cookie':cookie_header}),context=context,timeout=15) as response:
     assert json.load(response)['storage']['binary_http_enabled'] is False
 print('HTTPS, private UI, authentication boundary, secure session and disabled file transfer verified.')

@@ -7,6 +7,7 @@ import server
 def test_private_ui_uses_same_origin_assets_and_no_inline_scripts():
     c=TestClient(server.app,base_url='https://testserver')
     r=c.get('/app');assert r.status_code==200;assert 'data-runtime="private"' in r.text;assert 'src="/app/assets/operations.js"' in r.text
+    assert 'La demo simula estos procesos' not in r.text
     assert "script-src 'self'" in r.headers['content-security-policy'];assert '<script>' not in r.text
     assert c.get('/app/assets/operations.js').status_code==200
     assert c.get('/app/assets/app.py').status_code==404

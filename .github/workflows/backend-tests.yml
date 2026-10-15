@@ -78,7 +78,7 @@ jobs:
           docker exec "$PG_CONTAINER" pg_restore -U pagdoc_ci -d pagdoc_ci /tmp/pagdoc_ci.dump
           test "$(docker exec "$PG_CONTAINER" psql -U pagdoc_ci -d pagdoc_ci -tAc "SELECT count(*) FROM tenants WHERE name='CI Backup Tenant';")" = "1"
       - name: Run backend regression tests
-        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_retention_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py test_operations_api.py test_private_operations_ui.py test_sharepoint_adapter.py test_clamav_scanner.py test_file_api.py
+        run: python -m pytest -q test_app.py test_runtime_config.py test_ops_api.py test_query_api.py test_retention_api.py test_security_hardening.py test_storage.py test_file_gateway.py test_file_records.py test_requirements_engine.py test_requirements_api.py test_document_history.py test_alerts_api.py test_audit_integrity.py test_operations_api.py test_private_operations_ui.py test_sharepoint_adapter.py test_clamav_scanner.py test_file_api.py test_email_alerts.py
       - name: Test authenticated private backup format
         run: python -m pytest -q test_private_backup.py
       - name: Run private server smoke test
@@ -119,7 +119,7 @@ jobs:
       - name: Validate local composition and start containers
         run: |
           docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml config --quiet
-          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml up --build --detach --wait --wait-timeout 240
+          docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml --profile notifications up --build --detach --wait --wait-timeout 240
       - name: Provision fictional administrator and verify HTTPS
         run: |
           docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml exec -T api python - <<'PY'
@@ -134,7 +134,7 @@ jobs:
           python3 deployment/local/smoke.py "$RUNNER_TEMP/pagdoc-private/root.crt"
       - name: Stop temporary CI services
         if: always()
-        run: docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml down
+        run: docker compose --env-file "$RUNNER_TEMP/pagdoc-private/runtime.env" -f deployment/local/compose.local.yml --profile notifications down
 
   antimalware:
     runs-on: ubuntu-latest

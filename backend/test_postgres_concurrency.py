@@ -36,6 +36,7 @@ def _seed():
         db.execute(delete(integrity.AuditSeal).where(integrity.AuditSeal.tenant_id == TENANT_ID))
         db.execute(delete(core.Audit).where(core.Audit.tenant_id == TENANT_ID))
         db.execute(delete(DocumentFileVersion).where(DocumentFileVersion.tenant_id == TENANT_ID))
+        db.execute(delete(file_api.FileDestination).where(file_api.FileDestination.tenant_id == TENANT_ID))
         db.execute(delete(file_api.FileSubject).where(file_api.FileSubject.tenant_id == TENANT_ID))
         db.execute(delete(core.Document).where(core.Document.tenant_id == TENANT_ID))
         db.execute(delete(core.User).where(core.User.tenant_id == TENANT_ID))
@@ -215,4 +216,63 @@ def test_postgres_rejects_concurrent_upload_with_stale_expected_version(tmp_path
     for thread in threads:thread.start()
     for thread in threads:thread.join(timeout=30)
     assert sorted(results)==[201,409]
+    assert len(list(gateway.store.root.rglob('*.bin')))==1
+
+
+def test_postgres_batch_creation_rejects_a_competing_stale_plan(tmp_path,monkeypatch):
+    from fastapi import HTTPException
+    _seed()
+    gateway=SecureDocumentGateway(EncryptedLocalStore(Path(tmp_path)/'batch-objects',Fernet.generate_key().decode()),CleanScanner())
+    monkeypatch.setattr(file_api,'configured_gateway',lambda:gateway)
+    entry=file_api.BatchEntry(path='Fictitious/new.pdf',subject_kind='company',sha256='0'*64)
+    barrier=threading.Barrier(2);outcomes=[];lock=threading.Lock()
+    def run():
+        with core.SessionLocal() as db:
+            user=db.get(core.User,USER_ID);barrier.wait(timeout=10)
+            try:
+                file_api.store_batch_item(db,user,entry,None,0,False,'application/pdf',b'%PDF-1.7\nfictitious concurrent batch\n%%EOF')
+                outcome=201
+            except HTTPException as exc:db.rollback();outcome=exc.status_code
+            with lock:outcomes.append(outcome)
+    threads=[threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:thread.start()
+    for thread in threads:thread.join(timeout=20)
+    assert sorted(outcomes)==[201,409]
+    assert len(list(gateway.store.root.rglob('*.bin')))==1
+
+
+def test_postgres_batch_and_attachment_share_safe_lock_order(tmp_path,monkeypatch):
+    from fastapi import HTTPException
+    _seed()
+    with core.SessionLocal() as db:
+        db.add(file_api.FileSubject(document_id=DOCUMENT_ID,tenant_id=TENANT_ID,subject_kind='company'));db.commit()
+    scanning=threading.Event();batch_lock=threading.Event();outcomes=[]
+    class PausedScanner(CleanScanner):
+        def scan(self,data,media_type):
+            if threading.current_thread().name=='ordinary-attachment':
+                scanning.set();assert batch_lock.wait(10)
+            return super().scan(data,media_type)
+    gateway=SecureDocumentGateway(EncryptedLocalStore(tmp_path/'mixed',Fernet.generate_key().decode()),PausedScanner())
+    monkeypatch.setattr(file_api,'configured_gateway',lambda:gateway)
+    original=file_api.scoped_document
+    def scoped(db,user,document_id,lock=False):
+        if lock and threading.current_thread().name=='batch-update':batch_lock.set()
+        return original(db,user,document_id,lock=lock)
+    monkeypatch.setattr(file_api,'scoped_document',scoped)
+    def run(batch):
+        try:
+            with core.SessionLocal() as db:
+                user=db.get(core.User,USER_ID)
+                if batch:
+                    assert scanning.wait(10)
+                    entry=file_api.BatchEntry(path='Concurrency document',subject_kind='company',sha256='0'*64)
+                    file_api.store_batch_item(db,user,entry,DOCUMENT_ID,0,False,'application/pdf',b'%PDF-1.7\nfictitious batch\n%%EOF')
+                else:file_api.store_upload(db,user,DOCUMENT_ID,0,'fictitious.pdf','application/pdf',b'%PDF-1.7\nfictitious attachment\n%%EOF')
+                outcomes.append(201)
+        except HTTPException as error:outcomes.append(error.status_code)
+        except Exception as error:outcomes.append(type(error).__name__)
+    threads=[threading.Thread(target=run,args=(False,),name='ordinary-attachment'),threading.Thread(target=run,args=(True,),name='batch-update')]
+    for thread in threads:thread.start()
+    for thread in threads:thread.join(20)
+    assert sorted(outcomes,key=str)==[201,409]
     assert len(list(gateway.store.root.rglob('*.bin')))==1

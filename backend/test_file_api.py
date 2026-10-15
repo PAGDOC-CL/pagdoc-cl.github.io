@@ -264,3 +264,88 @@ def test_login_never_selects_between_two_published_tenants(files):
     assert c.get('/login/branding').json()=={'logo_version':0}
     assert c.get('/login/branding/logo').status_code==404
     assert c.get('/ops/branding').json()['logo_version']==1
+
+
+def batch_entry(path='Company/Legal/fictitious.pdf',payload=b'%PDF-1.7\nfictitious batch evidence\n%%EOF',**target):
+    import hashlib
+    return {'path':path,'subject_kind':'company','vehicle_id':None,'sha256':hashlib.sha256(payload).hexdigest(),**target}
+
+
+def batch_preview(c,entry):
+    response=c.post('/ops/files/batch/preview',json={'entries':[entry]})
+    assert response.status_code==200,response.text
+    return response.json()['items'][0]
+
+
+def batch_upload(c,entry,plan,payload=b'%PDF-1.7\nfictitious batch evidence\n%%EOF',replace=False):
+    params={'path':entry['path'],'subject_kind':entry['subject_kind'],'expected_version':plan['expected_version'],'allow_replace':replace}
+    if entry.get('vehicle_id'):params['vehicle_id']=entry['vehicle_id']
+    if plan['document_id']:params['expected_document_id']=plan['document_id']
+    return c.post('/ops/files/batch/item',params=params,content=payload,headers={'Content-Type':'application/pdf'})
+
+
+def test_batch_warns_before_replace_preserves_versions_and_skips_identical(files):
+    c,store,scanner=files;entry=batch_entry();plan=batch_preview(c,entry)
+    assert plan['status']=='new' and plan['document_id'] is None
+    first=batch_upload(c,entry,plan);assert first.status_code==201,first.text
+    id=first.json()['document_id'];assert first.json()['version']==1
+    plan=batch_preview(c,entry);assert plan['status']=='identical'
+    assert batch_upload(c,entry,plan).json()['status']=='identical'
+    assert scanner.calls==1
+    second=b'%PDF-1.7\nfictitious changed content\n%%EOF';changed=batch_entry(payload=second)
+    plan=batch_preview(c,changed);assert plan['status']=='replace' and plan['document_id']==id
+    assert batch_upload(c,changed,plan,second).status_code==409
+    assert batch_upload(c,changed,plan,second,True).json()['version']==2
+    assert c.get(f'/ops/files/documents/{id}/versions/1/download').content==b'%PDF-1.7\nfictitious batch evidence\n%%EOF'
+    assert c.get(f'/ops/files/documents/{id}/versions/2/download').content==second
+    assert c.get('/ops/files/documents').json()['total']==1
+    assert batch_upload(c,changed,plan,second,True).status_code==409
+    assert len(list(store.root.rglob('*.bin')))==2
+
+
+def test_batch_rejects_stale_new_plan_and_rolls_back_rejected_new_file(files):
+    c,store,scanner=files;entry=batch_entry();plan=batch_preview(c,entry)
+    scanner.mode='blocked';assert batch_upload(c,entry,plan).status_code==422
+    assert c.get('/ops/files/documents').json()['total']==0
+    with core.SessionLocal() as db:assert db.scalar(select(file_api.FileDestination)) is None
+    scanner.mode='clean';assert batch_upload(c,entry,plan).status_code==201
+    assert batch_upload(c,entry,plan).status_code==409
+    assert c.get('/ops/files/documents').json()['total']==1
+
+
+def test_batch_does_not_mix_tenants_vehicles_or_distinct_paths(files):
+    c,_,_=files
+    entries=[batch_entry(),batch_entry(path='Company/Safety/fictitious.pdf'),batch_entry(subject_kind='vehicle',vehicle_id=1)]
+    ids=[]
+    for entry in entries:
+        plan=batch_preview(c,entry);ids.append(batch_upload(c,entry,plan).json()['document_id'])
+    assert len(set(ids))==3
+    login(c,2);entry=batch_entry();assert batch_preview(c,entry)['status']=='new'
+    foreign=batch_entry(subject_kind='vehicle',vehicle_id=1)
+    assert c.post('/ops/files/batch/preview',json={'entries':[foreign]}).status_code==404
+    login(c,3)
+    assert c.post('/ops/files/batch/preview',json={'entries':[entry]}).status_code==403
+    assert batch_upload(c,entry,{'document_id':None,'expected_version':0}).status_code==403
+
+
+def test_batch_adopts_exact_existing_filename_and_rejects_ambiguous_records(files):
+    c,_,_=files;id=create(c);assert upload(c,id).status_code==201
+    entry=batch_entry(path='fictitious.pdf');plan=batch_preview(c,entry)
+    assert plan['document_id']==id and plan['status']=='replace'
+    other=create(c);assert upload(c,other).status_code==201
+    assert c.post('/ops/files/batch/preview',json={'entries':[entry]}).status_code==409
+
+
+@pytest.mark.parametrize('path',['../f.pdf','/absolute/f.pdf','folder//f.pdf','folder/../f.pdf','folder\\f.pdf'])
+def test_batch_rejects_unsafe_paths_before_storage(files,path):
+    c,store,_=files
+    assert c.post('/ops/files/batch/preview',json={'entries':[batch_entry(path=path)]}).status_code==422
+    assert not list(store.root.rglob('*.bin'))
+
+
+def test_batch_normalizes_case_and_enforces_csrf(files):
+    c,_,_=files;entry=batch_entry();assert batch_upload(c,entry,batch_preview(c,entry)).status_code==201
+    assert batch_preview(c,batch_entry(path='company/LEGAL/FICTITIOUS.PDF'))['status']=='identical'
+    assert c.post('/ops/files/batch/preview',json={'entries':[entry,entry]}).status_code==422
+    del c.headers['X-PAGDOC-CSRF']
+    assert c.post('/ops/files/batch/preview',json={'entries':[entry]}).status_code==403

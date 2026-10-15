@@ -204,6 +204,7 @@ def test_existing_confirmed_drug_dates_recalculated_without_replacing_binary(fil
     payload=c.get(f'/ops/files/documents/{identity}/analysis').json()
     assert payload['expires_on']==(issued+timedelta(days=30)).isoformat() and payload['revision']==4
     assert len(c.get(f'/ops/files/documents/{identity}/versions').json())==1
+    assert c.get('/ops/files/documents').json()['items'][0]['expiry_status']=='valid'
     assert c.get('/ops/files/analysis/status').json()['counts']['confirmed']==1
     login(c,2);assert c.get('/ops/files/analysis/status').json()['total']==0
 

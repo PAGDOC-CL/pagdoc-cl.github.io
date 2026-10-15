@@ -145,5 +145,5 @@ def test_failed_dump_restarts_original_services_without_deleting_data(tmp_path):
     docker = FailedDump()
     with pytest.raises(backup.BackupError, match='dump failure'):
         backup.create_backup(config, tmp_path / 'backups', PASSWORD, docker)
-    assert docker.calls[-1] == ['start', '--wait', 'api', 'proxy']
+    assert docker.calls[-1] == ['up', '--detach', '--no-recreate', '--wait', '--wait-timeout', '240', 'api', 'proxy']
     assert not list((tmp_path / 'backups').iterdir())

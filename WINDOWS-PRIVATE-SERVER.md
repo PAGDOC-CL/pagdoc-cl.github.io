@@ -441,3 +441,40 @@ En **Usuarios y acceso**, el administrador puede seleccionar **Generar clave tem
 Mientras SMTP no esté configurado, las claves temporales nuevas no tienen vencimiento automático. Una vez configurado, las nuevas claves se emitirán con 24 horas de vigencia. Las claves emitidas sin fecha no caducan retroactivamente: se cambian al primer ingreso o se renuevan de forma explícita. Al iniciar sesión, la API permite únicamente consultar la identidad, cambiar la contraseña o cerrar sesión hasta que el titular elija una clave personal. La nueva contraseña debe cumplir los requisitos y ser distinta de la temporal. El segundo factor existente permanece activo. Una clave temporal nueva invalida la anterior; una vencida requiere renovación administrativa o recuperación por correo configurado.
 
 Las cuentas anteriores conservan su acceso hasta que se les genere una clave temporal. La creación de usuarios en la interfaz exige cambio al primer ingreso de forma predeterminada. El administrador actual usa **Mi seguridad** para cambiar su propia clave. La migración `0021_temporary_password` agrega estos controles sin modificar documentos.
+
+### Acceso remoto privado con NetBird
+
+Esta opción agrega una entrada HTTPS únicamente en la IPv4 de NetBird de Ubuntu, dentro de `100.64.0.0/10`. Conserva `https://localhost:8443/app`, los datos, las claves y el antivirus. No abre puertos del router ni publica la base de datos o la API. El equipo, Ubuntu, Docker y NetBird deben permanecer encendidos.
+
+NetBird Free permite hasta 5 usuarios y 100 equipos, según su [página de planes](https://netbird.io/pricing). Usa explícitamente Free; no actives pruebas de Team/Business, facturación o tarjetas. Cada persona usa su cuenta de red privada y, por separado, su correo/clave de PAGDOC. No compartas una cuenta de red entre personas.
+
+En Ubuntu, dentro de `/home/usuario/pagdoc-private`:
+
+```bash
+bash deployment/local/control.sh remote-install
+bash deployment/local/control.sh remote-connect
+```
+
+El primer comando instala el cliente CLI desde el repositorio APT oficial firmado. Necesita Ubuntu con systemd activo; si falta, se detiene antes de instalar y se debe revisar WSL. El segundo inicia NetBird y presenta el inicio de sesión de su cuenta. Abre el enlace de autorización en el navegador de Windows si Ubuntu no abre uno. No pegues credenciales, tokens o códigos de conexión en GitHub o en el chat. El cliente no configura DNS, rutas de otras redes, IPv6 o SSH remoto.
+
+En el panel de NetBird, organiza el servidor en el grupo `PAGDOC-Servidor` y los equipos autorizados en `PAGDOC-Usuarios`. Crea una política de usuarios hacia servidor, solo TCP 8443, y retira la regla inicial Default/All-to-All tras tener la regla específica. Esta configuración evita dar acceso a otros servicios o entre los equipos de los usuarios. La política se gestiona en tu cuenta NetBird, no desde la base de PAGDOC. Añade solamente los usuarios y dispositivos que autorices.
+
+Después de conectar el servidor:
+
+```bash
+bash deployment/local/control.sh remote-enable
+```
+
+El comando verifica que NetBird esté conectado y que su IP esté asignada a Ubuntu. Escribe solo esa dirección en `~/.config/pagdoc-private/remote.env` (600), agrega el listener privado y reinicia la misma instalación. También adapta los enlaces de recuperación de contraseña al destino privado sin configurar SMTP. Comprueba HTTPS con validación del certificado y confirma que la API rechaza consultas sin sesión. Finalmente imprime el enlace privado real y exporta únicamente el certificado público `pagdoc-ca-publica.crt`; nunca su clave privada. Esta prueba se hace desde el servidor y no demuestra aún conectividad desde otro equipo.
+
+En cada equipo autorizado instala el [cliente oficial NetBird](https://docs.netbird.io/get-started/install/windows), conéctalo a la misma red y confía en el certificado público de PAGDOC. En Windows importa ese certificado en **Usuario actual → Entidades de certificación raíz de confianza**, verificando con el administrador la huella SHA-256 impresa por el comando. No omitas la validación TLS ni instales archivos que contengan claves privadas. Abre el enlace impreso, inicia sesión en PAGDOC y prueba la vista previa de un documento autorizado desde una conexión distinta (por ejemplo, datos móviles). Un equipo que no está autorizado/conectado a NetBird no debe poder abrirlo.
+
+El enlace no es público y no funcionará únicamente por reenviarlo sin esos requisitos. Mantén el acceso restringido a los dispositivos autorizados y verifica el plan Free antes de añadir más usuarios.
+
+```bash
+bash deployment/local/control.sh remote-status
+bash deployment/local/control.sh remote-check
+bash deployment/local/control.sh remote-disable
+```
+
+`remote-disable` retira la entrada privada y restaura la publicación solo local, conservando los datos. Si cambió la IP de NetBird, `start` se detiene antes de recrear servicios y solicita actualizar con `remote-enable`. La configuración no afirma que hay acceso remoto operativo hasta comprobarlo desde otro equipo de la red privada.

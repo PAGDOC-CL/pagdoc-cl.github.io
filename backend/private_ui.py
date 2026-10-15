@@ -12,5 +12,7 @@ def private_app():
 
 @core.app.get('/app/assets/{asset}',include_in_schema=False)
 def app_asset(asset:str):
-    if asset not in {'operations.js','operations.css','operations-film.mp4','operations-poster.jpg'}:raise HTTPException(404,'Asset not found')
-    return FileResponse(ROOT/'assets'/asset,media_type={'.js':'text/javascript','.css':'text/css','.mp4':'video/mp4','.jpg':'image/jpeg'}[Path(asset).suffix])
+    tutorial_names={'overview','services','planning-write','planning-read','files-write','files-read','reviews','tasks-write','tasks-read','closeout','security','access','integrations'}
+    allowed={'operations.js','operations.css','operations-film.mp4','operations-poster.jpg','tutorial-lessons.json'} | {f'tutorial-{name}.mp4' for name in tutorial_names}
+    if asset not in allowed:raise HTTPException(404,'Asset not found')
+    return FileResponse(ROOT/'assets'/asset,media_type={'.js':'text/javascript','.css':'text/css','.mp4':'video/mp4','.jpg':'image/jpeg','.json':'application/json'}[Path(asset).suffix])

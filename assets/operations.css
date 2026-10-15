@@ -15,3 +15,6 @@
 .login-brand>.film-caption{position:absolute;z-index:2;left:clamp(24px,4vw,70px);right:clamp(24px,4vw,70px);bottom:25px;padding:0;color:#d6e7f1}
 .login-brand>.film-caption button{background:#071f39a6;backdrop-filter:blur(8px);border-color:#ffffff50}
 @media(max-width:650px){.login-brand{min-height:560px;justify-content:center;padding-bottom:85px}.login-company-brand{min-height:90px;margin-bottom:6px}.login-company-brand img{max-width:260px;max-height:120px}.login-brand>.film-caption{bottom:20px;left:24px;right:24px;flex-wrap:wrap}}
+
+/* Tutorial media is confined to the one-time guided dialog. */
+.tutorial-media{margin:16px 0 20px}.tutorial-media video{display:block;width:100%;max-height:46vh;aspect-ratio:16/9;background:#08283e;border-radius:10px}.tutorial-media details{font-size:13px;line-height:1.65;margin:10px 0}.tutorial-media summary{cursor:pointer;font-weight:700}.tutorial-media li{margin:8px 0}

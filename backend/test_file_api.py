@@ -475,3 +475,23 @@ def test_path_migration_preserves_existing_destination_and_refuses_truncation(tm
     with engine.begin() as db:db.execute(text('UPDATE documents SET title=:title'),{'title':'Company/'+'x'*220+'/a.pdf'})
     with pytest.raises(RuntimeError,match='no data was truncated'):command.downgrade(config,'0017_file_worker_project')
     engine.dispose()
+
+
+def test_worker_folder_proposals_confirmed_scoped_without_login_accounts(files):
+    c,_,_=files
+    paths=['02_ACREDITACION_TRABAJADORES/03_PERSONAL_DE_EXCAVACION/Persona Ficticia Prueba/11. EXAMEN DE ALCOHOL Y DROGAS/a.pdf','02_ACREDITACION_TRABAJADORES/Persona Ficticia Prueba/32. FOTOGRAFIA/b.png']
+    proposals=c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items']
+    assert all(item['status']=='worker_missing' and item['proposed_worker_name']=='Persona Ficticia Prueba' for item in proposals)
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':False}).status_code==422
+    result=c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True});assert result.status_code==200,result.text
+    assert result.json()['created_count']==1
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).json()['created_count']==0
+    assert all(item['status']=='resolved' for item in c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items'])
+    with core.SessionLocal() as db:
+        worker=db.scalar(select(core.Worker).where(core.Worker.full_name=='Persona Ficticia Prueba'))
+        assert worker.identifier is None and worker.job_title is None
+        assert len(db.scalars(select(core.User)).all())==6
+        worker.active=0;db.commit()
+    assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).status_code==409
+    login(c,2);assert c.post('/ops/files/batch/destinations',json={'paths':paths}).json()['items'][0]['status']=='worker_missing'
+    login(c,5);assert c.post('/ops/files/batch/subjects',json={'paths':paths,'confirmed':True}).status_code==403

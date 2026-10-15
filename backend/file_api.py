@@ -558,7 +558,7 @@ def detect_destinations(data:DestinationRequest,user:core.Editor,db:core.Db):
 
 def destination_proposals(paths,user,db):
     vehicles=db.scalars(select(core.Vehicle).where(core.Vehicle.tenant_id==user.tenant_id)).all()
-    workers=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id,core.Worker.active==1)).all()
+    workers=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id)).all()
     projects=db.scalars(select(core.Project).where(core.Project.tenant_id==user.tenant_id,core.Project.active==1)).all()
     def clean_name(value):
         value=unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode().casefold()
@@ -575,9 +575,15 @@ def destination_proposals(paths,user,db):
         segments={re.sub(r'^\d+\s+','',clean_name(part)) for part in folders.split('/')}
         matched_workers=[w for w in workers if clean_name(w.full_name) in segments]
         matched_projects=[p for p in projects if clean_name(p.name) in segments]
+        excluded={'trabajadores','trabajador','personal','colaboradores','acreditacion','empresa','empresarial','examen','examenes','certificado','certificados','contrato','anexo','registro','entrega','elementos','proteccion','fotografia','fotografias','cursos','curso','documentos','documentacion','licencia','cedula','identidad','finiquito','cotizaciones','pago','salud','seguridad','prevencion','induccion','procedimiento','ocupacional','preocupacional','alcohol','drogas','riesgos','hoja','vida','capacitacion','capacitaciones','varios','varias','generales','general','mufas','chile'}
+        person_candidates={}
+        for segment in folders.split('/'):
+            words=clean_name(segment).split()
+            if 2<=len(words)<=7 and not any(word in excluded or any(c.isdigit() for c in word) for word in words) and all(len(word)>=2 for word in words) and len(segment)<=150:
+                person_candidates[clean_name(segment)]=' '.join(segment.replace('_',' ').split())
         company=bool(re.search(r'\bempresa\b|\bcompany\b',normalized))
         worker=bool(re.search(r'trabajador|personal|colaborador',normalized))
-        if len(matched_workers)==1 and not matched and not company and len(matched_projects)<=1:
+        if len(matched_workers)==1 and matched_workers[0].active and not matched and not company and len(matched_projects)<=1:
             result={'path':path,'status':'resolved','subject_kind':'worker','worker_id':matched_workers[0].id,'vehicle_id':None,'project_id':matched_projects[0].id if matched_projects else None,'subject_name':matched_workers[0].full_name}
         elif len(matched_projects)==1 and not matched and not matched_workers and not company and not worker:
             result={'path':path,'status':'resolved','subject_kind':'project','project_id':matched_projects[0].id,'worker_id':None,'vehicle_id':None,'subject_name':matched_projects[0].name}
@@ -588,6 +594,9 @@ def destination_proposals(paths,user,db):
         elif not matched and len(plates)==1 and not company and not worker and not matched_workers and not matched_projects and re.search(r'vehicul|veihuc|fleet|arrendad',normalized) and re.fullmatch(r'(?:[A-Z]{4}[0-9]{2}|[A-Z]{2}[0-9]{4})',next(iter(plates))):
             plate=next(iter(plates))
             result={'path':path,'status':'vehicle_missing','subject_kind':None,'vehicle_id':None,'proposed_plate':plate,'proposed_label':'Vehículo '+plate,'reason':'Ficha de vehículo pendiente. Se puede crear junto a las demás con confirmación; no acredita el vehículo.'}
+        elif worker and not company and not matched and not plates and not matched_workers and not matched_projects and len(person_candidates)==1:
+            person_key,person_name=next(iter(person_candidates.items()))
+            result={'path':path,'status':'worker_missing','subject_kind':None,'vehicle_id':None,'proposed_worker_name':person_name,'proposed_worker_key':person_key,'reason':'Ficha operacional propuesta desde la carpeta; requiere confirmar identidad. No crea usuario ni acredita.'}
         else:
             result={'path':path,'status':'review','subject_kind':None,'vehicle_id':None,'reason':'Destino ambiguo, patente inactiva o sin identidad reconocible. Revisa la carpeta; no se asigna por aproximación.'}
         results.append(result)
@@ -615,6 +624,23 @@ def register_folder_vehicles(data:RegisterFolderVehicles,user:core.Editor,db:cor
         created.append({'id':vehicle.id,'plate':plate,'label':vehicle.label})
     db.commit()
     return {'created':created,'created_count':len(created),'note':'Solo fichas operacionales; sin acreditación ni aprobación automática.'}
+
+
+@core.app.post('/ops/files/batch/subjects')
+def register_folder_subjects(data:RegisterFolderVehicles,user:core.Editor,db:core.Db):
+    require_enabled()
+    db.scalar(select(core.Tenant).where(core.Tenant.id==user.tenant_id).with_for_update())
+    proposals=destination_proposals(data.paths,user,db)['items']
+    if any(item['status']=='review' for item in proposals):raise HTTPException(409,'Hay destinos ambiguos o inactivos. No se crearon fichas en este grupo.')
+    pending={('worker',item['proposed_worker_key']) if item['status']=='worker_missing' else ('vehicle',item['proposed_plate']):item for item in proposals if item['status'] in {'vehicle_missing','worker_missing'}}
+    created=[]
+    for (kind,key),item in sorted(pending.items()):
+        if kind=='worker':record=core.Worker(tenant_id=user.tenant_id,full_name=item['proposed_worker_name'],active=1)
+        else:record=core.Vehicle(tenant_id=user.tenant_id,label=item['proposed_label'],plate=item['proposed_plate'],active=1)
+        db.add(record);db.flush();core.add_audit(db,user,kind+'.folder_create',kind,record.id)
+        created.append({'kind':kind,'id':record.id,'label':record.full_name if kind=='worker' else record.plate})
+    db.commit()
+    return {'created':created,'created_count':len(created),'note':'Solo fichas operacionales, sin crear cuentas, enviar invitaciones o acreditar.'}
 
 
 @core.app.get('/ops/files/folders')

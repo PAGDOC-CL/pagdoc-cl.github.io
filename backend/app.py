@@ -500,6 +500,7 @@ def workers(user: Auth, db: Db):
 
 @app.post("/workers", status_code=201)
 def add_worker(data: WorkerIn, user: Editor, db: Db):
+    db.scalar(select(Tenant).where(Tenant.id==user.tenant_id).with_for_update())
     w = Worker(tenant_id=user.tenant_id, full_name=data.full_name.strip(), identifier=data.identifier, job_title=data.job_title, active=1)
     db.add(w); db.flush(); add_audit(db, user, "worker.create", "worker", w.id); db.commit()
     return {"id": w.id, "full_name": w.full_name, "active": True}

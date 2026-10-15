@@ -151,10 +151,13 @@ with request('/ops/files/documents?'+urlencode({'path_prefix':long_path.rsplit('
 print('OK: >700-character private folder path, stable duplicate lookup and direct-child navigation on PostgreSQL.')
 
 # A valid fictitious PDF exercises the actual raster renderer and analysis worker.
-def readable_pdf():
+def readable_pdf(drug=False):
     stream=b'BT /F1 18 Tf 50 740 Td (Certificado ficticio - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj 0 -35 Td (Fecha de vencimiento: 15/10/2027) Tj ET'
     objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream']
-    body=b'%PDF-1.4\n'+b'% fictitious size-limit test padding\n'*(1024*1024);offsets=[]
+    if drug:
+        stream=b'BT /F1 18 Tf 50 740 Td (Examen de drogas - Fictitious backup tenant) Tj 0 -35 Td (Fecha de emision: 15/10/2026) Tj ET'
+        objects[-1]=b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream'
+    body=b'%PDF-1.4\n'+(b'' if drug else b'% fictitious size-limit test padding\n'*(1024*1024));offsets=[]
     for i,obj in enumerate(objects,1):offsets.append(len(body));body+=f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
     start=len(body);body+=f'xref\n0 {len(objects)+1}\n0000000000 65535 f \n'.encode()
     for offset in offsets:body+=f'{offset:010} 00000 n \n'.encode()
@@ -178,3 +181,18 @@ for attempt in range(45):
 assert analysis['status']=='ready',analysis
 assert analysis['expires_on']=='2027-10-15'
 print('OK: >35 MiB HTTPS upload, real antivirus scan and encrypted storage; real private PDF raster preview and background extraction with destination identity, applied expiry and no automatic accreditation.')
+
+worker_paths=['02_TRABAJADORES/Persona Ficticia Prueba/11. EXAMEN ALCOHOL Y DROGAS/a.pdf','02_TRABAJADORES/Persona Ficticia Prueba/32. FOTOGRAFIA/b.png']
+with request('/ops/files/batch/destinations',{'paths':worker_paths}) as response:assert all(item['status']=='worker_missing' for item in json.load(response)['items'])
+with request('/ops/files/batch/subjects',{'paths':worker_paths,'confirmed':True}) as response:assert json.load(response)['created_count']==1
+with request('/ops/files/batch/subjects',{'paths':worker_paths,'confirmed':True}) as response:assert json.load(response)['created_count']==0
+with request('/ops/files/batch/destinations',{'paths':worker_paths}) as response:assert all(item['status']=='resolved' for item in json.load(response)['items'])
+with request('/ops/files/documents',{'title':'Fictitious 30-day drug report','subject_kind':'company'}) as response:drug_id=json.load(response)['id']
+with request(f'/ops/files/documents/{drug_id}/versions?file_name=drug-report.pdf&expected_version=0',readable_pdf(drug=True),'application/pdf') as response:assert json.load(response)['version']==1
+for attempt in range(45):
+    with request(f'/ops/files/documents/{drug_id}/analysis') as response:drug_analysis=json.load(response)
+    if drug_analysis['status'] not in {'pending','processing'}:break
+    time.sleep(1)
+assert drug_analysis['status']=='ready' and drug_analysis['issued_on']=='2026-10-15' and drug_analysis['expires_on']=='2026-11-14',drug_analysis
+with request('/ops/files/analysis/status') as response:assert json.load(response)['alcohol_drugs_days']==30
+print('OK: confirmed joint worker registration, operational-only identities and actual offline drug report issuance plus 30-day expiry.')

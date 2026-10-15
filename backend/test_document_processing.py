@@ -172,3 +172,72 @@ def test_worker_restart_requeues_only_incomplete_analysis(files):
         assert db.scalar(select(analysis.FileAnalysis).where(analysis.FileAnalysis.document_id==second)).status=='confirmed'
         assert len(list(db.scalars(select(analysis.DocumentFileVersion))))==2
     assert len(list(store.root.rglob('*.bin')))==2
+
+
+@pytest.mark.parametrize('text,expiry,safe',[
+ ('Examen de drogas. Fecha de emisión: 15/10/2026','2026-11-14',True),
+ ('Alcohol y drogas. Fecha de emisión: 31/12/2025','2026-01-30',True),
+ ('Test de drogas. Fecha de emisión: 01/02/2024','2024-03-02',True),
+ ('Alcohol y drogas. Fecha de realización: 15/10/2026',None,False),
+ ('Alcohol y drogas. Fecha de emisión: 15/10/2026. Vencimiento: 15/10/2027','2026-11-14',False),
+ ('Alcohol y drogas. Fecha de emisión: 15/10/2026. Fecha de emisión: 16/10/2026',None,False),
+ ('Alcohol y drogas. Fecha de emisión: 15/10/2027','2027-11-14',False),
+])
+def test_drug_policy_uses_unique_issue_and_thirty_days(text,expiry,safe):
+    result=analysis.interpret(text,today=date(2026,10,15))
+    assert result['document_type']=='alcohol_drogas'
+    assert result['expires_on']==expiry and result['safe_to_apply']==safe
+    assert result['validity_days']==30
+    assert not analysis.interpret(text,method='ocr',today=date(2026,10,15))['safe_to_apply']
+
+
+def test_existing_confirmed_drug_dates_recalculated_without_replacing_binary(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    from file_records import DocumentFileVersion
+    issued=date.today()-timedelta(days=20)
+    with core.SessionLocal() as db:
+        version=db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.document_id==identity))
+        db.get(core.Document,identity).expires_on=issued+timedelta(days=365)
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=identity,file_version_id=version.id,status='confirmed',rules_version=1,result_json=json.dumps({'document_type':'alcohol_drogas','issued_on':issued.isoformat(),'expires_on':(issued+timedelta(days=365)).isoformat(),'revision':3})));db.commit()
+        assert analysis.process_next(db,extractor=lambda *_:pytest.fail('No need to reread verified issue'))
+        assert not analysis.process_next(db)
+    payload=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert payload['expires_on']==(issued+timedelta(days=30)).isoformat() and payload['revision']==4
+    assert len(c.get(f'/ops/files/documents/{identity}/versions').json())==1
+    assert c.get('/ops/files/analysis/status').json()['counts']['confirmed']==1
+    login(c,2);assert c.get('/ops/files/analysis/status').json()['total']==0
+
+
+def test_drug_confirmation_enforces_thirty_day_rule(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    with core.SessionLocal() as db:assert analysis.process_next(db)
+    issued=date.today()-timedelta(days=2)
+    data={'expected_version':1,'expected_revision':0,'document_type':'alcohol_drogas','issued_on':issued.isoformat(),'expires_on':(issued+timedelta(days=31)).isoformat(),'reason':'Fictitious date review'}
+    assert c.post(f'/ops/files/documents/{identity}/analysis/confirm',json=data).status_code==422
+    data['expires_on']=(issued+timedelta(days=30)).isoformat()
+    assert c.post(f'/ops/files/documents/{identity}/analysis/confirm',json=data).status_code==200
+    data['issued_on']=None
+    assert c.post(f'/ops/files/documents/{identity}/analysis/confirm',json=data).status_code==422
+
+
+def test_prior_automatic_drug_analysis_is_revisited_once(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    from file_records import DocumentFileVersion
+    issued=date.today()-timedelta(days=5)
+    with core.SessionLocal() as db:
+        version=db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.document_id==identity))
+        db.get(core.Document,identity).expires_on=issued+timedelta(days=365)
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=identity,file_version_id=version.id,status='ready',rules_version=1,result_json=json.dumps({'document_type':'alcohol_drogas','issued_on':issued.isoformat(),'expires_on':(issued+timedelta(days=365)).isoformat()})));db.commit()
+        text='Examen de drogas. Demo One. Fecha de emisión: '+issued.isoformat()
+        assert analysis.process_next(db,extractor=lambda *_:(text,[],'pdf_text'))
+        assert not analysis.process_next(db)
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='ready' and result['expires_on']==(issued+timedelta(days=30)).isoformat()
+
+
+@pytest.mark.parametrize('days,light',[(8,'valid'),(7,'expiring'),(-1,'expired')])
+def test_drug_traffic_lights_use_last_seven_days(days,light):
+    from types import SimpleNamespace
+    today=analysis.datetime.now(analysis.ZoneInfo('America/Santiago')).date()
+    row=SimpleNamespace(status='ready',result_json=json.dumps({'document_type':'alcohol_drogas'}))
+    assert analysis.analysis_payload(row,SimpleNamespace(expires_on=today+timedelta(days=days)),1)['traffic_light']==light

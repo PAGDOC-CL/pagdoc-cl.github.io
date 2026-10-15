@@ -72,6 +72,7 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  await click('[data-action="guide-next"]');assert.equal($('breadcrumb').textContent,'Empresa y vehículos');
  await click('[data-action="guide-prev"]');assert.equal($('breadcrumb').textContent,'Planificador de personal');
  $('close-dialog').click();w.localStorage.clear();await click('#refresh');assert(!$('tutorial-video'));assert(!$('editor').open,'The tutorial stays dismissed even after local browser storage is cleared');
+ w.history.replaceState(null,'','/app?tutorial=ver');await click('#refresh');assert($('editor').open,'An explicit review link reopens the tutorial for an existing user');assert($('tutorial-video'));assert.equal(w.location.search,'','The review query is consumed after opening');assert(!d.querySelector('[data-action="tutorial"]'));$('close-dialog').click();await click('#refresh');assert(!$('editor').open,'Reviewing does not enable automatic replay');
  assert(d.querySelector('#shell .brand').textContent.includes('Fictitious Company'));assert(d.querySelector('#shell .brand').textContent.includes('Gestionado con PAGDOC'));
  await click('[data-view="files"]');assert($('view').textContent.includes('Empresa y vehículos'));assert($('view').textContent.includes('0 documentos'));
  await click('[data-action="file-new-doc"]');assert($('edit-form').elements.vehicle_id.disabled);

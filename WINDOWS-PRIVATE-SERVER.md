@@ -1,6 +1,6 @@
 # PAGDOC en tu equipo Windows
 
-Esta instalación crea un **piloto privado local**, accesible en `https://localhost:8443/app`. Usa Ubuntu en WSL 2, Docker Engine, PostgreSQL y Caddy con una autoridad de certificados local. No contrata hosting, no abre el router y no publica documentación real en GitHub Pages. El equipo debe estar encendido y WSL/Docker en ejecución.
+Esta instalación crea una **instancia privada local**, accesible en `https://localhost:8443/app`, con cuentas y registros propios de la empresa. Usa Ubuntu en WSL 2, Docker Engine, PostgreSQL y Caddy con una autoridad de certificados local. No contrata hosting, no abre el router y no publica documentación real en GitHub Pages. El equipo debe estar encendido y WSL/Docker en ejecución. La carga de documentos requiere los controles adicionales indicados al final.
 
 ## 1. Preparar Windows
 
@@ -29,7 +29,7 @@ La instalación pide tu contraseña de Linux para `sudo`, instala Docker Engine 
 
 La primera descarga y construcción necesita Internet. La base de datos y la API no publican puertos al host. Solo el proxy publica el puerto 8443 en la dirección de bucle local `127.0.0.1`.
 
-## 3. Habilitar HTTPS y crear el administrador de prueba
+## 3. Habilitar HTTPS y crear el administrador de empresa
 
 ```powershell
 .\PAGDOC.ps1 -Action TrustCertificate
@@ -38,7 +38,24 @@ La primera descarga y construcción necesita Internet. La base de datos y la API
 
 `TrustCertificate` instala la autoridad local de PAGDOC únicamente en el almacén de confianza de tu usuario Windows. Muestra su huella y no exporta la clave privada. Caddy en un contenedor no puede instalar por sí solo esa confianza en Windows. Es necesario reiniciar el navegador si mantiene una advertencia anterior.
 
-`Provision` pide un nombre de empresa **ficticio**, un correo como `admin@example.invalid` y una contraseña de al menos 12 caracteres. No se envían correos y no se sobrescriben cuentas. Abre `https://localhost:8443/app`, inicia sesión y configura MFA desde **Mi seguridad**.
+`Provision` pide el nombre de la empresa, el correo del administrador y una contraseña de PAGDOC de al menos 12 caracteres. El correo corporativo es válido como identificador local, pero este registro no verifica el buzón ni conecta Microsoft 365. No se envían correos y no se sobrescriben cuentas. El comando solo permite registrar el primer administrador de una empresa sin usuarios. Los siguientes accesos se gestionan desde su administrador autenticado.
+
+Abre `https://localhost:8443/app`, inicia sesión y configura MFA desde **Mi seguridad**. La interfaz muestra el nombre de la empresa guardado en la base privada. No contiene usuarios, servicios ni documentos de ejemplo precargados.
+
+Para una prueba totalmente ficticia separada sigue disponible `bash deployment/local/control.sh provision-beta`; no es el comando de registro corporativo.
+
+### Actualizar una instalación ya creada
+
+Si tu asistente todavía dice `Fictitious tenant name`, cancélalo con Ctrl+C. Dentro de Ubuntu, ejecuta:
+
+```bash
+cd "$HOME/pagdoc-private" &&
+git pull --ff-only &&
+bash deployment/local/control.sh start &&
+bash deployment/local/control.sh provision
+```
+
+La actualización conserva la configuración y los volúmenes. Si Git detecta cambios locales o una divergencia, detente y revísalos; no uses reset ni elimines la base para forzar la actualización.
 
 ## 4. Comprobar y detener
 

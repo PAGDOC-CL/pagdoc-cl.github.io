@@ -1,6 +1,6 @@
 # PAGDOC — Gestión Documental Inteligente
 
-Servidor privado en un equipo Windows propio: [instalación local con WSL](WINDOWS-PRIVATE-SERVER.md). El piloto requiere verificación en el equipo final y mantiene la carga de documentos reales deshabilitada.
+Servidor privado en un equipo Windows propio: [instalación local con WSL y registro del administrador de empresa](WINDOWS-PRIVATE-SERVER.md). Requiere verificación en el equipo final y mantiene la carga de documentos reales deshabilitada hasta integrar los controles pendientes.
 
 PAGDOC es un proyecto de control documental para empresas contratistas: vigencias, acreditación, trabajadores, vehículos, proyectos y trazabilidad.
 

@@ -242,7 +242,7 @@ def bootstrap(user:core.Auth,db:core.Db):
     people=db.scalars(select(core.Worker).where(core.Worker.tenant_id==user.tenant_id,core.Worker.active==1).order_by(core.Worker.id)).all()
     projects=db.scalars(select(core.Project).where(core.Project.tenant_id==user.tenant_id,core.Project.active==1).order_by(core.Project.id)).all()
     users=db.scalars(select(core.User).where(core.User.tenant_id==user.tenant_id,core.User.active==1).order_by(core.User.id)).all()
-    return {'me':{'id':user.id,'email':user.email,'role':user.role,'mfa_enabled':bool(user.mfa_enabled),'capabilities':capabilities(user.role)},'workers':[{'id':w.id,'full_name':w.full_name,'job_title':w.job_title} for w in people],'projects':[{'id':p.id,'name':p.name} for p in projects],'users':[{'id':u.id,'label':u.email} for u in users if user.role=='admin' or u.id==user.id]}
+    return {'tenant':{'id':user.tenant_id,'name':db.get(core.Tenant,user.tenant_id).name},'me':{'id':user.id,'email':user.email,'role':user.role,'mfa_enabled':bool(user.mfa_enabled),'capabilities':capabilities(user.role)},'workers':[{'id':w.id,'full_name':w.full_name,'job_title':w.job_title} for w in people],'projects':[{'id':p.id,'name':p.name} for p in projects],'users':[{'id':u.id,'label':u.email} for u in users if user.role=='admin' or u.id==user.id]}
 
 
 @core.app.get('/ops/services')

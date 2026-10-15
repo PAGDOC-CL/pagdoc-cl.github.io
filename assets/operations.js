@@ -89,7 +89,7 @@ async function load(){
  if(can('documents.read')){[data.reviews,data.requirements,data.projectRequirements]=await Promise.all([request('/ops/reviews'),request('/requirements'),request('/ops/project-requirements')]);}else{data.reviews=[];data.requirements=[];data.projectRequirements=[];}
  if(can('users.manage'))data.accounts=await request('/users');else data.accounts=[];
  $('shell').hidden=false;$('login').hidden=true;$('role-preview').hidden=privateMode;$('logout').hidden=!privateMode;$('back-link').hidden=privateMode;
- $('identity').textContent=me.email+' · '+me.role;$('tenant-name').textContent=privateMode?'Espacio privado':'Empresa Demostración SpA';$('mode-label').textContent=privateMode?'SESIÓN PRIVADA · PERMISOS DEL SERVIDOR':'DEMO PÚBLICA · DATOS FICTICIOS';
+ $('identity').textContent=me.email+' · '+me.role;$('tenant-name').textContent=privateMode?(data.tenant?.name||'Espacio privado'):'Empresa Demostración SpA';$('mode-label').textContent=privateMode?'SESIÓN PRIVADA · PERMISOS DEL SERVIDOR':'DEMO PÚBLICA · DATOS FICTICIOS';
  $('environment').textContent=privateMode?'Entorno privado. Los registros se guardan en el servidor y los permisos se verifican en cada operación. La carga de archivos permanece bloqueada hasta completar almacenamiento y análisis antimalware.':'DEMOSTRACIÓN OPERATIVA · Personas, servicios y evidencias ficticios. Los cambios se guardan solo en este navegador. Simular un rol no autentica usuarios ni concede permisos reales. No ingreses datos ni documentos reales.';
  document.querySelectorAll('[data-cap]').forEach(b=>b.hidden=!can(b.dataset.cap));if((view==='reviews'||view==='closeout')&&!can('documents.read')||view==='access'&&!can('users.manage'))view='overview';await render();
 }

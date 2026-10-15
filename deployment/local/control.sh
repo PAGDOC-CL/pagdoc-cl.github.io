@@ -9,11 +9,12 @@ case "$task" in
     python3 "$local_dir/generate_config.py" "$runtime_env"
     sudo service docker start
     "${compose[@]}" up --build --detach --wait --wait-timeout 240
-    echo 'Private pilot available at https://localhost:8443/app after trusting its local certificate.'
+    echo 'Servidor privado disponible en https://localhost:8443/app tras confiar en su certificado local. Revisa los controles pendientes antes de incorporar documentos.'
     ;;
   stop) "${compose[@]}" stop ;;
   status) "${compose[@]}" ps ;;
-  provision) "${compose[@]}" exec -e PAGDOC_ALLOW_BETA_PROVISIONING=YES api python provision_beta.py ;;
+  provision) "${compose[@]}" exec -e PAGDOC_ALLOW_ADMIN_PROVISIONING=YES api python provision_admin.py ;;
+  provision-beta) "${compose[@]}" exec -e PAGDOC_ALLOW_BETA_PROVISIONING=YES api python provision_beta.py ;;
   certificate) "${compose[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt ;;
   check)
     command -v python3 >/dev/null
@@ -21,5 +22,5 @@ case "$task" in
     sudo docker compose version
     echo 'Prerequisites available. Documents and SharePoint are not enabled by this command.'
     ;;
-  *) echo 'Use start, stop, status, provision, certificate or check.' >&2; exit 2 ;;
+  *) echo 'Use start, stop, status, provision, provision-beta, certificate or check.' >&2; exit 2 ;;
 esac

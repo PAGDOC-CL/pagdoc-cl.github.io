@@ -10,6 +10,36 @@ import app as core
 import server
 import operations_api as ops
 
+def test_company_admin_provision_and_authenticated_company_name(client):
+    from provision_admin import provision
+    with core.SessionLocal() as db:
+        uid=provision(db,'Fictitious Contractor Operations','admin@contractor.example','private-test-password-2026');db.commit()
+        user=db.get(core.User,uid)
+        assert user.role=='admin' and core.hasher.verify('private-test-password-2026',user.password_hash)
+        assert user.password_hash!='private-test-password-2026'
+    r=client.post('/auth/login',json={'email':'admin@contractor.example','password':'private-test-password-2026'})
+    assert r.status_code==200
+    assert client.get('/ops/bootstrap').json()['tenant']['name']=='Fictitious Contractor Operations'
+    assert client.get('/ops/services').json()==[]
+    assert client.get('/ops/integrations').json()['storage']['binary_http_enabled'] is False
+
+def test_company_bootstrap_never_overwrites_existing_access(client):
+    from provision_admin import provision
+    with core.SessionLocal() as db:
+        before=db.get(core.User,1).password_hash
+        with pytest.raises(ValueError,match='ya existe'):provision(db,'New Fictitious Company','u1@example.invalid','different-test-password')
+        with pytest.raises(ValueError,match='ya tiene usuarios'):provision(db,'Demo One','new@contractor.example','different-test-password')
+        assert db.get(core.User,1).password_hash==before
+        db.rollback()
+
+def test_company_identity_validation_and_local_operator_gate(monkeypatch):
+    from provision_admin import validate_identity,main
+    assert validate_identity(' Fictitious Company ',' ADMIN@CONTRACTOR.EXAMPLE ')==('Fictitious Company','admin@contractor.example')
+    for name,email in [('', 'admin@contractor.example'),('Company','not-an-email'),('Company','a..b@contractor.example'),('Company','admin@-example.com')]:
+        with pytest.raises(ValueError):validate_identity(name,email)
+    monkeypatch.delenv('PAGDOC_ALLOW_ADMIN_PROVISIONING',raising=False)
+    with pytest.raises(SystemExit,match='controlador local'):main()
+
 @pytest.fixture()
 def client(tmp_path,monkeypatch):
     engine=create_engine('sqlite:///'+str(tmp_path/'ops.sqlite3'),connect_args={'check_same_thread':False});core.Base.metadata.create_all(engine)

@@ -186,3 +186,14 @@ def test_new_temporary_account_and_email_recovery_finish_requirement(client,deli
     response=client.post('/auth/login',json={'email':'temporary@example.invalid','password':'Changed-Fictitious42!'})
     assert not response.json()['password_change_required']
     assert client.get('/ops/bootstrap').status_code==200
+
+
+def test_temporary_deadline_waits_for_smtp_without_retroactive_expiry(client,monkeypatch):
+    login(client)
+    monkeypatch.setattr(email_alerts,'smtp_configured',lambda:False)
+    generated=client.post('/users/5/temporary-password',json={}).json()
+    assert generated['expires_at'] is None and generated['password_change_required']
+    monkeypatch.setattr(email_alerts,'smtp_configured',lambda:True)
+    with core.SessionLocal() as db:assert db.get(core.User,5).temporary_password_expires_at is None
+    generated=client.post('/users/5/temporary-password',json={}).json()
+    assert generated['expires_at'] is not None

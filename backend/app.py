@@ -218,6 +218,11 @@ def _active_session(request: Request, db: Session) -> UserSession | None:
     return db.scalar(select(UserSession).where(UserSession.token_hash == _sha256(token), UserSession.revoked_at.is_(None), UserSession.expires_at > now))
 
 
+def temporary_password_deadline():
+    from email_alerts import smtp_configured
+    return datetime.now(timezone.utc)+timedelta(hours=24) if smtp_configured() else None
+
+
 def current_user(request: Request, db: Db) -> User:
     session = _active_session(request, db)
     if session is None:
@@ -442,7 +447,7 @@ def add_user(data: UserIn, user: AdminWrite, db: Db):
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(409, "Email already registered")
     if not valid_password(data.password):raise HTTPException(422,MESSAGE)
-    created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1,password_change_required=int(data.temporary_password),temporary_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=24) if data.temporary_password else None)
+    created = User(tenant_id=user.tenant_id, email=email, password_hash=hasher.hash(data.password), role=data.role, active=1,password_change_required=int(data.temporary_password),temporary_password_expires_at=temporary_password_deadline() if data.temporary_password else None)
     db.add(created)
     db.flush()
     add_audit(db, user, "user.create", "user", created.id)
@@ -458,7 +463,7 @@ def reset_user_password(user_id: int, data: PasswordResetIn, user: AdminWrite, d
     if not valid_password(data.password):raise HTTPException(422,MESSAGE)
     target.password_hash = hasher.hash(data.password)
     target.password_change_required=1
-    target.temporary_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=24)
+    target.temporary_password_expires_at=temporary_password_deadline()
     revoke_user_sessions(db, target.id)
     add_audit(db, user, "user.password_reset", "user", target.id)
     db.commit()

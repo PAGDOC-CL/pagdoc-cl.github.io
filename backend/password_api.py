@@ -165,7 +165,7 @@ def temporary_password(user_id:int,user:core.AdminWrite,db:core.Db):
     # Guaranteed policy compliance, with 192 random bits; the cleartext is returned once.
     password=secrets.token_urlsafe(24)+'Aa1!'
     target.password_hash=core.hasher.hash(password);target.password_change_required=1
-    target.temporary_password_expires_at=now()+timedelta(hours=24)
+    target.temporary_password_expires_at=core.temporary_password_deadline()
     core.revoke_user_sessions(db,target.id)
     db.execute(update(PasswordRecovery).where(PasswordRecovery.user_id==target.id,PasswordRecovery.used_at.is_(None)).values(used_at=now()))
     core.add_audit(db,user,'user.temporary_password_created','user',target.id);db.commit()

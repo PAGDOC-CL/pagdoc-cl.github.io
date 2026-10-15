@@ -318,7 +318,9 @@ y conserva sus subcarpetas como rutas lógicas. El selector **Carpeta** permite
 consultarlas. **Subdivisión por tipo** agrupa lógicamente los documentos por la
 clasificación del contenido, sin duplicar ni mover los originales. La detección usa carpetas explícitas de empresa, patentes registradas
 y coincidencias exactas con nombres completos de trabajadores o proyectos activos.
-No crea identidades ni asigna por similitud. Una ruta desconocida o ambigua se
+No crea identidades ni asigna por similitud. Si falta un trabajador, usa
+**Registrar trabajador**; esto crea la ficha operacional, sin cuentas ni
+invitaciones. Los proyectos se registran desde **Proyectos y servicios**. Una ruta desconocida o ambigua se
 detiene antes de escribir: corregir el destino o usar la selección manual. Los
 destinos resueltos y los reemplazos se muestran juntos para una confirmación previa.
 Se mantienen los límites de 250 archivos, 15 MiB por archivo y 250 MiB por lote.

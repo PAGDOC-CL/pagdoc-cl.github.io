@@ -1,7 +1,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.resolve(__dirname,'..'),errors=[],calls=[],downloads=[];
-const docs=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
+const docs=[],workers=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
 let onboardingSeen=false;
 let signedIn=false,rejectUpload=false,logoVersion=0,rejectName='';const previewHashes=new Map();
 const me={id:1,email:'admin@example.invalid',role:'admin',capabilities:['plan.read','plan.write','documents.read','documents.write','documents.review','tasks.read','tasks.write','users.manage']};
@@ -24,7 +24,8 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
    else if(url.pathname==='/ops/email-alerts/preview')body={recipient:me.email,expiring:2,expired:1,overdue_tasks:3,missing_dates:4,delivery_configured:false};
    else if(url.pathname==='/ops/branding')body={logo_version:logoVersion};
    else if(url.pathname==='/ops/branding/logo'){assert(options.body instanceof w.File);assert.equal(options.headers['Content-Type'],'image/png');assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');body={logo_version:++logoVersion};}
-   else if(url.pathname==='/ops/bootstrap')body={me,tenant:{id:1,name:'Fictitious Company'},workers:[],projects:[],users:[]};
+   else if(url.pathname==='/workers'&&options.method==='POST'){const worker={id:workers.length+1,...payload};workers.push(worker);body=worker;}
+   else if(url.pathname==='/ops/bootstrap')body={me,tenant:{id:1,name:'Fictitious Company'},workers,projects:[],users:[]};
    else if(url.pathname==='/ops/dashboard')body={active_services:0,pending_tasks:0,overdue_tasks:0,tomorrow_assignments:0,tomorrow_blocked:0};
    else if(url.pathname==='/ops/integrations')body={storage:{binary_http_enabled:true}};
    else if(url.pathname==='/ops/files/folders')body={folders:[...new Set(docs.filter(doc=>doc.title.includes('/')).map(doc=>doc.title.slice(0,doc.title.lastIndexOf('/'))))].map(path=>({path,count:docs.filter(doc=>doc.title.startsWith(path+'/')).length}))};
@@ -124,6 +125,7 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  await click('[data-action="file-batch"]');before=docs.length;addFolders(Array.from({length:251},(_,i)=>directoryFile('Company/Large/fictitious-'+i+'.pdf')));assert($('form-error').textContent.includes('250'));assert($('batch-preview').textContent.includes('0 archivos'));assert.equal(docs.length,before);$('close-dialog').click();
  await click('[data-action="file-auto"]');assert.equal($('edit-form').elements.subject_kind.value,'auto');before=docs.length;addFolders([directoryFile('Empresa/Certificados/automatico.pdf')]);await submit();assert.equal(docs.length,before);assert($('batch-warning').textContent.includes('Destinos detectados'));$('edit-form').elements.confirm_replacements.checked=true;await submit();assert.equal(docs.length,before+1);
  await click('[data-action="file-auto"]');before=docs.length;addFolders([directoryFile('Desconocido/evidencia.pdf')]);await submit();assert($('form-error').textContent.includes('destino explícito'));assert.equal(docs.length,before);$('close-dialog').click();
+ await click('[data-action="file-new-worker"]');set('full_name','Persona Ficticia UI');set('identifier','FICT-01');set('job_title','Técnico ficticio');await submit();assert.equal(workers.length,1);assert.equal(workers[0].full_name,'Persona Ficticia UI');
  await click('[data-view="security"]');assert($('view').textContent.includes('Alertas por correo'));await click('[data-action="email-preferences"]');set('enabled','1');set('days_before','7');await submit();assert(emailPref.enabled);assert.equal(emailPref.days_before,7);assert($('view').textContent.includes('Activadas en tu perfil'));await click('[data-action="email-preview"]');assert($('dialog-detail').textContent.includes('Tareas atrasadas: 3'));assert($('dialog-detail').textContent.includes('no envía correos'));$('close-dialog').click();await click('[data-action="file-logo"]');const logoField=$('edit-form').elements.upload_file;
  Object.defineProperty(logoField,'files',{value:[new w.File(['fictitious PNG'],'fictitious.png',{type:'image/png'})],configurable:true});await submit();
  assert.equal(logoVersion,1);assert.equal($('company-logo').getAttribute('src'),'/ops/branding/logo?v=1');assert(!$('editor').open);

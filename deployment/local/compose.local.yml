@@ -23,6 +23,9 @@ services:
       PAGDOC_SECRET_KEY: ${PAGDOC_SECRET_KEY:?Generate private configuration first}
       PAGDOC_ENCRYPTION_KEY: ${PAGDOC_ENCRYPTION_KEY:?Generate private configuration first}
       PAGDOC_PUBLIC_ORIGIN: https://localhost:8443
+      PAGDOC_STORAGE_ROOT: /var/lib/pagdoc-files
+      PAGDOC_CLAMAV_HOST: antimalware
+    volumes: [file_objects:/var/lib/pagdoc-files]
     command: [sh, -c, 'python -m alembic upgrade head && exec uvicorn server:app --host 0.0.0.0 --port 8000 --no-access-log']
     depends_on:
       database:
@@ -36,6 +39,24 @@ services:
       interval: 5s
       timeout: 6s
       retries: 30
+    restart: unless-stopped
+  antimalware:
+    image: clamav/clamav:1.4
+    profiles: [files]
+    volumes: [clamav_signatures:/var/lib/clamav]
+    environment:
+      CLAMAV_NO_MILTERD: 'true'
+      CLAMD_CONF_AlertExceedsMax: 'yes'
+      CLAMD_CONF_AlertEncryptedArchive: 'yes'
+      CLAMD_CONF_AlertEncryptedDoc: 'yes'
+      CLAMD_CONF_StreamMaxLength: 16M
+      CLAMD_CONF_MaxScanSize: 100M
+      CLAMD_CONF_MaxFileSize: 20M
+      CLAMD_CONF_MaxRecursion: '16'
+      CLAMD_CONF_MaxFiles: '1000'
+      CLAMD_CONF_MaxThreads: '2'
+      CLAMD_CONF_ConcurrentDatabaseReload: 'no'
+    # The image supplies a ClamD healthcheck. No antivirus port is published.
     restart: unless-stopped
   proxy:
     image: caddy:2
@@ -52,3 +73,5 @@ volumes:
   database:
   caddy_data:
   caddy_config:
+  file_objects:
+  clamav_signatures:

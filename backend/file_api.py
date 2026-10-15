@@ -1,5 +1,6 @@
 """Explicitly enabled company/vehicle files; authenticated, scoped, scanned and versioned."""
 import asyncio
+import hashlib
 import os
 import re
 import threading
@@ -234,3 +235,115 @@ def download(document_id: int, version: int, user: FileRead, db: core.Db):
     except (GatewayError, StorageError):
         raise HTTPException(503, 'No se pudo verificar la integridad del archivo almacenado.')
     return Response(payload, media_type=media_type, headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(filename, safe=''), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+class TenantBranding(core.Base):
+    """One encrypted logo document per tenant; previous versions remain immutable."""
+    __tablename__ = 'tenant_branding'
+    tenant_id: Mapped[int] = mapped_column(ForeignKey('tenants.id'), primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey('documents.id'), unique=True)
+    login_visible: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+
+
+@core.app.get('/ops/branding')
+def branding(user: core.Auth, db: core.Db, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    row = db.get(TenantBranding, user.tenant_id)
+    return {'logo_version': latest_version(db, user.tenant_id, row.document_id) if row else 0}
+
+
+@core.app.get('/ops/branding/logo')
+def branding_logo(user: core.Auth, db: core.Db):
+    require_enabled()
+    row = db.get(TenantBranding, user.tenant_id)
+    if row is None:
+        raise HTTPException(404, 'La empresa todavía no tiene un logo cargado.')
+    version = latest_version(db, user.tenant_id, row.document_id)
+    file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == user.tenant_id, DocumentFileVersion.document_id == row.document_id, DocumentFileVersion.version == version))
+    if file is None or file.media_type not in {'image/png', 'image/jpeg'}:
+        raise HTTPException(404, 'Logo no disponible.')
+    try:
+        payload = read_file_version(db, user, row.document_id, version, gateway())
+    except (GatewayError, StorageError):
+        raise HTTPException(503, 'No se pudo comprobar la integridad del logo.')
+    return Response(payload, media_type=file.media_type, headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline'})
+
+
+def store_logo(db, user, file_name, media_type, payload, login_visible=False):
+    db.scalar(select(core.Tenant).where(core.Tenant.id == user.tenant_id).with_for_update())
+    row = db.get(TenantBranding, user.tenant_id)
+    if row is None:
+        doc = core.Document(tenant_id=user.tenant_id, title='Logo corporativo', subject_type='company', subject_name=db.get(core.Tenant, user.tenant_id).name)
+        db.add(doc)
+        db.flush()
+        row = TenantBranding(tenant_id=user.tenant_id, document_id=doc.id)
+        db.add(row)
+        db.flush()
+    row.login_visible = int(login_visible)
+    core.add_audit(db, user, 'branding.login_publish' if login_visible else 'branding.private_update', 'tenant', user.tenant_id)
+    try:
+        file = store_new_file_version(db, user, row.document_id, gateway(), file_name, media_type, payload)
+    except (GatewayError, HTTPException):
+        db.rollback()
+        raise HTTPException(422, 'No se guardó el logo: el almacenamiento o el análisis antimalware no pudieron validarlo. El logo anterior se conserva.')
+    return {'logo_version': file.version}
+
+
+@core.app.post('/ops/branding/logo', status_code=201)
+async def upload_logo(request: Request, user: core.AdminWrite, db: core.Db, file_name: str = Query(min_length=1, max_length=160), login_visible: bool = False):
+    require_enabled()
+    media = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+    suffix = Path(file_name).suffix.lower()
+    if media not in {'image/png', 'image/jpeg'} or suffix not in ({'.png'} if media == 'image/png' else {'.jpg', '.jpeg'}):
+        raise HTTPException(415, 'El logo debe ser PNG o JPEG. No se admiten SVG ni contenido activo.')
+    if not _upload_slots.acquire(blocking=False):
+        raise HTTPException(429, 'Hay dos cargas en curso. Espera y vuelve a intentarlo.')
+    try:
+        payload = bytearray()
+        try:
+            async with asyncio.timeout(60):
+                async for block in request.stream():
+                    if len(payload) + len(block) > 2 * 1024 * 1024:
+                        raise HTTPException(413, 'El logo no puede superar 2 MiB.')
+                    payload.extend(block)
+        except TimeoutError:
+            raise HTTPException(408, 'La carga tardó demasiado.')
+        except ClientDisconnect:
+            raise HTTPException(400, 'La carga se interrumpió.')
+        return await run_in_threadpool(store_logo, db, user, file_name, media, bytes(payload), login_visible)
+    finally:
+        _upload_slots.release()
+
+
+def login_branding_row(db):
+    # Public presentation is explicitly opted into by an administrator. If multiple
+    # tenants opt in, do not guess which company's identity to publish on this host.
+    rows = db.scalars(select(TenantBranding).where(TenantBranding.login_visible == 1).limit(2)).all()
+    return rows[0] if len(rows) == 1 else None
+
+
+@core.app.get('/login/branding')
+def login_branding(db: core.Db, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    row = login_branding_row(db)
+    if not row:
+        return {'logo_version': 0}
+    return {'name': db.get(core.Tenant, row.tenant_id).name, 'logo_version': latest_version(db, row.tenant_id, row.document_id)}
+
+
+@core.app.get('/login/branding/logo')
+def login_branding_logo(db: core.Db):
+    require_enabled()
+    row = login_branding_row(db)
+    if row is None:
+        raise HTTPException(404, 'Logo de acceso no configurado.')
+    file = db.scalar(select(DocumentFileVersion).where(DocumentFileVersion.tenant_id == row.tenant_id, DocumentFileVersion.document_id == row.document_id).order_by(DocumentFileVersion.version.desc()).limit(1))
+    if file is None or file.media_type not in {'image/png', 'image/jpeg'}:
+        raise HTTPException(404, 'Logo no disponible.')
+    try:
+        payload = gateway().store.get(row.tenant_id, file.object_key)
+        if len(payload) != file.size_bytes or hashlib.sha256(payload).hexdigest() != file.sha256:
+            raise StorageError('Logo integrity mismatch')
+    except StorageError:
+        raise HTTPException(503, 'No se pudo comprobar la integridad del logo.')
+    return Response(payload, media_type=file.media_type, headers={'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', 'Content-Disposition':'inline'})

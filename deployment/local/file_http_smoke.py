@@ -59,3 +59,18 @@ for media,(extension,content) in types.items():
     except HTTPError as error:
         assert error.code==401
 print('OK: authenticated HTTPS company/vehicle files, actual ClamAV scans, DOCX/XLSX/PDF round trips, version records and unauthenticated denial.')
+
+# A fictitious 1-pixel PNG exercises the encrypted corporate branding path.
+import base64
+logo=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlS8AAAAASUVORK5CYII=')
+with request('/ops/branding/logo?file_name=fictitious-logo.png',logo,'image/png') as response:
+    assert json.load(response)['logo_version']==1
+with request('/ops/branding/logo') as response:
+    assert response.read()==logo
+    assert response.headers['Cache-Control']=='no-store'
+try:
+    urlopen(origin+'/ops/branding/logo',context=context,timeout=15)
+    raise AssertionError('Logo exposed without authentication')
+except HTTPError as error:
+    assert error.code==401
+print('OK: private encrypted tenant logo, actual ClamAV and unauthenticated denial.')

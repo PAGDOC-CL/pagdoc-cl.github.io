@@ -170,3 +170,42 @@ Primero comprueba el flujo con un documento ficticio en el equipo final. Al inco
 - [Certificados locales de Caddy](https://caddyserver.com/docs/automatic-https#local-https).
 
 La CI construye los contenedores y comprueba migraciones, HTTPS con el certificado local, ingreso con usuario ficticio y rechazo de solicitudes sin sesión. Windows/WSL y el navegador del equipo final requieren verificación allí.
+
+### Identidad de empresa y carga por lotes
+
+Después de actualizar y ejecutar `bash deployment/local/control.sh start`, la
+migración aditiva `0011_tenant_branding` conserva los registros existentes. Tras
+iniciar sesión, el menú muestra el nombre de la empresa y «Gestionado con PAGDOC».
+Un administrador puede ir a **Mi seguridad → Cambiar logo de empresa**, seleccionar
+el logo original PNG/JPEG de hasta 2 MiB y guardarlo. El archivo pasa por ClamAV,
+se cifra con la clave existente y se sirve con sesión dentro de su empresa.
+La casilla **Mostrar también este logo y el nombre de empresa en la pantalla de
+acceso** autoriza mostrar únicamente esa identidad corporativa antes del acceso;
+los documentos y las rutas de archivos continúan exigiendo sesión. Si varias
+empresas activan esa casilla en el mismo servidor, el acceso no elige una al azar.
+Las versiones anteriores se conservan. El logo nunca se incorpora a GitHub Pages.
+Si aún no se ha cargado el original, se muestra el nombre de la empresa.
+
+En **Empresa y vehículos → Cargar varios archivos** se pueden seleccionar entre
+1 y 50 documentos, hasta 15 MiB cada uno y 200 MiB por lote. Extraer primero los
+ZIP en el computador. Elegir **Empresa** o **un mismo vehículo** y confirmar el
+destino después de revisar los nombres. No combinar carpetas de distintos vehículos
+ni fusionar patentes por su nombre de carpeta. Cada archivo crea un documento
+independiente, pendiente de revisión y sin fecha de vencimiento inferida.
+
+El lote procesa secuencialmente y se detiene en el primer rechazo o interrupción.
+Los documentos guardados antes del error se conservan. El cuadro indica cuántos
+se confirmaron y qué archivo detuvo el lote. Cerrar, pulsar **Actualizar** y revisar
+el registro afectado antes de usar **Adjuntar archivo** si sigue sin archivo. No
+repetir el lote completo: no hay reanudación automática tras cerrar o recargar la
+página. Un corte de red puede ocurrir después de que el servidor haya guardado un
+registro; por eso se comprueba la lista antes de reintentar. Mantener Ubuntu y la
+página abiertos durante la carga. Crear otro lote solo con los documentos restantes.
+
+
+La pantalla privada conserva el panel azul y sus textos. Incluye un video MP4 de
+imágenes industriales ilustrativas generadas, sin texto sobre las fotografías,
+con reproducción silenciosa en bucle y control para pausar. Con la preferencia
+`prefers-reduced-motion`, se muestra la portada fija hasta pulsar reproducir.
+La reproducción se pausa al entrar en la sesión o al ocultar la pestaña.
+El video no contiene material documental ni fotografías reales de Mufas Chile.

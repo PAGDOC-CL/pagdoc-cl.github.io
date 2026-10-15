@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0010_file_subjects"
+EXPECTED_SCHEMA_REVISION = "0011_tenant_branding"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

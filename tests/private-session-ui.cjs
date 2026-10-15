@@ -14,12 +14,14 @@ const dom = new JSDOM(html, {
   url: 'https://localhost:8443/app', runScripts: 'dangerously', virtualConsole: vc,
   beforeParse(w) {
     w.structuredClone = structuredClone;
+    w.HTMLMediaElement.prototype.play=async function(){Object.defineProperty(this,'paused',{value:false,configurable:true});};w.HTMLMediaElement.prototype.pause=function(){Object.defineProperty(this,'paused',{value:true,configurable:true});};
     w.HTMLDialogElement.prototype.showModal = function() {this.open = true;};
     w.HTMLDialogElement.prototype.close = function() {this.open = false;};
     w.fetch = async (url, options) => {
       calls.push({url, options});
       let status = 200, body;
-      if (url === '/auth/login') {
+      if(url==='/login/branding'){body={logo_version:0};}
+      else if (url === '/auth/login') {
         const credentials = JSON.parse(options.body);
         if (credentials.password === 'invalid') {status = 401; body = {detail: 'Invalid credentials'};}
         else {authenticated = true; body = {authenticated: true};}
@@ -46,13 +48,16 @@ async function login(password) {
   await settle();
   assert(!$('login').hidden);
   assert($('shell').hidden);
+  assert.equal($('login-film').getAttribute('src'),'/app/assets/operations-film.mp4');assert($('login-film').muted);assert($('login-film').loop);
+  $('film-toggle').click();await settle();assert.equal($('login-film').paused,false);assert.equal($('film-toggle').textContent,'Pausar imágenes');
+  $('film-toggle').click();await settle();assert.equal($('login-film').paused,true);
   assert.equal($('message').textContent, '', 'Initial 401 belongs to the sign-in screen');
   await login('invalid');
   assert.equal($('login-error').textContent, 'Invalid credentials');
   assert($('shell').hidden, 'Rejected login never opens workspace');
   await login('fictitious-test-password');
   assert(!$('shell').hidden);
-  assert($('login').hidden);
+  assert($('login').hidden);assert.equal($('login-film').paused,true);
   assert.equal($('message').textContent, '');
   assert.equal($('login-password').value, '');
   assert.equal($('tenant-name').textContent, 'Fictitious tenant');

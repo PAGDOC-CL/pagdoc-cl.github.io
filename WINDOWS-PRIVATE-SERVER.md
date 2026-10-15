@@ -395,3 +395,11 @@ Las rutas lógicas de carpetas y documentos admiten hasta 1024 caracteres en tot
 asociaciones e identifica rutas por SHA-256 de su forma normalizada para evitar
 claves de índice excesivas con Unicode en PostgreSQL. No renombra ni trunca rutas
 existentes. El límite individual de nombre de archivo continúa en 160 caracteres.
+
+
+La validación del lote identifica cada archivo no admitido con su ruta y motivo
+(formato, tamaño, archivo vacío, nombre largo o temporal de Office). La acción
+«Apartar archivos de esta selección» permite continuar con los restantes, sin
+borrar los originales ni enviar archivos antes de revisar nuevamente el lote.
+DOC/XLS antiguos y otros tipos no se convierten de forma silenciosa: requieren
+convertir una copia a PDF, DOCX o XLSX conservando el original.

@@ -36,6 +36,7 @@ def _seed():
         db.execute(delete(integrity.AuditSeal).where(integrity.AuditSeal.tenant_id == TENANT_ID))
         db.execute(delete(core.Audit).where(core.Audit.tenant_id == TENANT_ID))
         db.execute(delete(DocumentFileVersion).where(DocumentFileVersion.tenant_id == TENANT_ID))
+        db.execute(delete(file_api.FileDestination).where(file_api.FileDestination.tenant_id == TENANT_ID))
         db.execute(delete(file_api.FileSubject).where(file_api.FileSubject.tenant_id == TENANT_ID))
         db.execute(delete(core.Document).where(core.Document.tenant_id == TENANT_ID))
         db.execute(delete(core.User).where(core.User.tenant_id == TENANT_ID))
@@ -215,4 +216,26 @@ def test_postgres_rejects_concurrent_upload_with_stale_expected_version(tmp_path
     for thread in threads:thread.start()
     for thread in threads:thread.join(timeout=30)
     assert sorted(results)==[201,409]
+    assert len(list(gateway.store.root.rglob('*.bin')))==1
+
+
+def test_postgres_batch_creation_rejects_a_competing_stale_plan(tmp_path,monkeypatch):
+    from fastapi import HTTPException
+    _seed()
+    gateway=SecureDocumentGateway(EncryptedLocalStore(Path(tmp_path)/'batch-objects',Fernet.generate_key().decode()),CleanScanner())
+    monkeypatch.setattr(file_api,'configured_gateway',lambda:gateway)
+    entry=file_api.BatchEntry(path='Fictitious/new.pdf',subject_kind='company',sha256='0'*64)
+    barrier=threading.Barrier(2);outcomes=[];lock=threading.Lock()
+    def run():
+        with core.SessionLocal() as db:
+            user=db.get(core.User,USER_ID);barrier.wait(timeout=10)
+            try:
+                file_api.store_batch_item(db,user,entry,None,0,False,'application/pdf',b'%PDF-1.7\nfictitious concurrent batch\n%%EOF')
+                outcome=201
+            except HTTPException as exc:db.rollback();outcome=exc.status_code
+            with lock:outcomes.append(outcome)
+    threads=[threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:thread.start()
+    for thread in threads:thread.join(timeout=20)
+    assert sorted(outcomes)==[201,409]
     assert len(list(gateway.store.root.rglob('*.bin')))==1

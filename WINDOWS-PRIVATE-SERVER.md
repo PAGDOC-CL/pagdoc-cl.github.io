@@ -187,21 +187,96 @@ Las versiones anteriores se conservan. El logo nunca se incorpora a GitHub Pages
 Si aún no se ha cargado el original, se muestra el nombre de la empresa.
 
 En **Empresa y vehículos → Cargar varios archivos** se pueden seleccionar entre
-1 y 50 documentos, hasta 15 MiB cada uno y 200 MiB por lote. Extraer primero los
-ZIP en el computador. Elegir **Empresa** o **un mismo vehículo** y confirmar el
-destino después de revisar los nombres. No combinar carpetas de distintos vehículos
-ni fusionar patentes por su nombre de carpeta. Cada archivo crea un documento
+1 y 250 documentos, hasta 15 MiB cada uno y 250 MiB en total. Extraer primero los
+ZIP en el computador. **Añadir carpeta y subcarpetas** incluye todos los archivos
+bajo la carpeta elegida; se puede repetir para acumular distintas carpetas en una
+misma carga. **Añadir archivos** permite combinarlos con archivos sueltos. Los
+botones **Quitar** y **Vaciar selección** permiten revisar la cola antes de guardar.
+Los archivos no admitidos deben quitarse explícitamente; no se omiten en silencio.
+
+Para documentos de **Empresa**, todas las carpetas se vinculan a la empresa actual.
+Para **Vehículos**, una sola carpeta usa el selector de vehículo general. Si hay
+varios grupos de origen, cada grupo muestra su propio selector y todos deben tener
+una asignación explícita antes de comenzar. Los grupos se forman con los dos
+primeros niveles de la ruta relativa cuando existen subcarpetas. El nombre de una
+carpeta no asigna patentes ni fusiona vehículos. Las carpetas con la misma patente
+siguen necesitando su asignación explícita.
+
+La ruta relativa de cada archivo se conserva en su título, hasta 200 caracteres;
+el nombre del archivo puede tener hasta 160. Los archivos con el mismo nombre en
+carpetas distintas se conservan por separado. Elegir otra vez la misma ruta se
+rechaza antes de agregarla a la cola. La organización del servidor sigue siendo
+por documentos; no se crean carpetas navegables. Cada archivo crea un documento
 independiente, pendiente de revisión y sin fecha de vencimiento inferida.
 
-El lote procesa secuencialmente y se detiene en el primer rechazo o interrupción.
-Los documentos guardados antes del error se conservan. El cuadro indica cuántos
-se confirmaron y qué archivo detuvo el lote. Cerrar, pulsar **Actualizar** y revisar
-el registro afectado antes de usar **Adjuntar archivo** si sigue sin archivo. No
-repetir el lote completo: no hay reanudación automática tras cerrar o recargar la
-página. Un corte de red puede ocurrir después de que el servidor haya guardado un
-registro; por eso se comprueba la lista antes de reintentar. Mantener Ubuntu y la
-página abiertos durante la carga. Crear otro lote solo con los documentos restantes.
+Antes de guardar, PAGDOC compara cada ruta dentro de la empresa o vehículo
+seleccionado. Si existe un archivo diferente en ese destino, muestra las rutas
+y exige confirmar el reemplazo. Actualiza el mismo documento, conserva versiones
+anteriores y deja la nueva versión pendiente de revisión. Si los bytes son
+idénticos, lo omite sin crear una versión. Si el destino cambia después de la
+comprobación, detiene la escritura y exige comprobar de nuevo. Los registros
+antiguos ambiguos requieren revisión manual; no se elige uno al azar.
 
+El lote procesa secuencialmente y se detiene en el primer rechazo o interrupción.
+Los documentos guardados antes del error se conservan. Un archivo nuevo rechazado
+no deja un documento vacío. El cuadro indica cuántos se confirmaron y qué archivo
+detuvo el lote. Cerrar, pulsar **Actualizar** y revisar antes de reintentar. Al
+volver a seleccionar las mismas rutas y destinos, los archivos idénticos ya
+confirmados se omiten. No hay reanudación automática tras cerrar la página.
+Mantener Ubuntu y la página abiertos durante la carga.
+
+### Administradores adicionales y tutorial
+
+Después de actualizar e iniciar el servidor, el operador local puede ejecutar:
+
+```bash
+bash deployment/local/control.sh provision-members --enable-alerts --emails administrador@example.invalid
+```
+
+Sustituir el correo ficticio por los destinatarios autorizados. Este asistente
+requiere una sola empresa y un administrador inicial. Crea cuentas activas con
+rol administrador y genera contraseñas fuertes que muestra únicamente en la
+terminal local. Para cuentas existentes conserva su contraseña, actualiza el rol
+y revoca las sesiones anteriores. No envía invitaciones ni contraseñas por correo.
+Entregar cada clave por un canal privado y cambiarla en **Mi seguridad**.
+El acceso desde otro computador requiere configurar una red privada; `localhost`
+solo funciona en el equipo servidor.
+
+El tutorial se abre al primer ingreso en cada navegador y está disponible desde
+**Tutorial**. Se adapta a los permisos reales del perfil y cubre documentos,
+planificador, revisiones, alertas y seguridad. No concede permisos adicionales.
+
+### Avisos por correo (configuración privada pendiente)
+
+Cada perfil puede activar avisos en **Mi seguridad → Configurar avisos**, elegir
+entre 1 y 90 días de anticipación y activar vencidos, próximos a vencer y tareas
+atrasadas. Se usa exclusivamente el correo registrado del perfil. Las cuentas
+creadas con `--enable-alerts` quedan suscritas, pero no hay envío hasta configurar
+una cuenta SMTP existente y autorizada por su proveedor:
+
+```bash
+bash deployment/local/control.sh configure-email
+bash deployment/local/control.sh start
+```
+
+El asistente solicita servidor, puerto TLS 465/587, usuario, remitente y credencial
+oculta. Verifica TLS y autenticación sin enviar mensajes. Guarda la configuración
+local con permisos 600 y conserva las claves de base de datos y cifrado. No pegar
+credenciales en GitHub ni en el chat. La conexión de SharePoint no configura SMTP;
+si el proveedor exige OAuth u otro método, esta conexión SMTP no lo sustituye.
+
+El servicio opcional comprueba cada 15 minutos y envía como máximo un resumen por
+perfil al día, desde las 09:00 de America/Santiago, si hay alertas. El servidor debe
+permanecer encendido. Solo cuenta vencimientos registrados y tareas pendientes;
+no deduce fechas desde los archivos ni adjunta documentos. Respeta empresa y
+permisos; los perfiles sin lectura documental no reciben conteos documentales.
+Los administradores ven tareas de la empresa; los demás solo las asignadas.
+
+La vista previa no envía mensajes. Un intento SMTP incierto queda marcado como
+`unknown` y no se reintenta automáticamente ese día para evitar duplicados.
+`sent` significa aceptado por SMTP, no una garantía de llegada a la bandeja.
+Comprobar una entrega real autorizada y su recepción antes de declarar operativo
+el correo. Esta configuración no contrata servicios ni pruebas pagadas.
 
 La pantalla privada conserva el panel azul y sus textos. Incluye un video MP4 de
 imágenes industriales ilustrativas generadas, sin texto sobre las fotografías,

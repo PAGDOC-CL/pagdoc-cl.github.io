@@ -74,3 +74,36 @@ try:
 except HTTPError as error:
     assert error.code==401
 print('OK: private encrypted tenant logo, actual ClamAV and unauthenticated denial.')
+
+# Folder path upsert over the actual HTTPS/ClamAV boundary.
+path='Fictitious company/Folder/evidence.pdf'
+content=b'%PDF-1.7\n% fictitious folder evidence\n%%EOF'
+def plan(data):
+    entry={'path':path,'subject_kind':'company','sha256':hashlib.sha256(data).hexdigest()}
+    with request('/ops/files/batch/preview',{'entries':[entry]}) as response:
+        return json.load(response)['items'][0]
+def upload(item,data,confirm=False):
+    query={'path':path,'subject_kind':'company','expected_version':item['expected_version'],'allow_replace':str(confirm).lower()}
+    if item['document_id'] is not None:query['expected_document_id']=item['document_id']
+    return request('/ops/files/batch/item?'+urlencode(query),data,'application/pdf')
+first=plan(content)
+assert first['status']=='new'
+with upload(first,content) as response:created=json.load(response)
+assert created['version']==1
+assert plan(content)['status']=='identical'
+changed=content+b'\n% revised fictitious evidence'
+replacement=plan(changed)
+assert replacement['status']=='replace'
+try:
+    upload(replacement,changed)
+    raise AssertionError('Replacement without confirmation succeeded')
+except HTTPError as error:assert error.code==409
+with upload(replacement,changed,True) as response:
+    result=json.load(response)
+    assert result['version']==2 and result['document_id']==created['document_id']
+with request(f"/ops/files/documents/{created['document_id']}/versions/1/download") as response:assert response.read()==content
+with request('/ops/email-alerts') as response:
+    pref=json.load(response)
+    assert pref['recipient']=='backup-admin@example.invalid' and pref['delivery_configured'] is False
+with request('/ops/email-alerts/preview') as response:assert json.load(response)['delivery_configured'] is False
+print('OK: folder destinations, identical detection, confirmed replacement, preserved history and private email preview without delivery.')

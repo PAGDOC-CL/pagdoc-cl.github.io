@@ -26,6 +26,12 @@ services:
       PAGDOC_STORAGE_ROOT: /var/lib/pagdoc-files
       PAGDOC_CLAMAV_HOST: antimalware
       PAGDOC_BINARY_HTTP_ENABLED: ${PAGDOC_BINARY_HTTP_ENABLED:-0}
+      PAGDOC_EMAIL_DELIVERY_ENABLED: ${PAGDOC_EMAIL_DELIVERY_ENABLED:-0}
+      PAGDOC_SMTP_HOST: ${PAGDOC_SMTP_HOST:-}
+      PAGDOC_SMTP_PORT: ${PAGDOC_SMTP_PORT:-587}
+      PAGDOC_SMTP_USERNAME: ${PAGDOC_SMTP_USERNAME:-}
+      PAGDOC_SMTP_PASSWORD: ${PAGDOC_SMTP_PASSWORD:-}
+      PAGDOC_SMTP_FROM: ${PAGDOC_SMTP_FROM:-}
     volumes: [file_objects:/var/lib/pagdoc-files]
     command: [sh, -c, 'python -m alembic upgrade head && exec uvicorn server:app --host 0.0.0.0 --port 8000 --no-access-log']
     depends_on:
@@ -41,6 +47,16 @@ services:
       timeout: 6s
       retries: 30
     restart: unless-stopped
+  notifications:
+    extends:
+      service: api
+    profiles: [notifications]
+    command: [python, notification_worker.py]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
   antimalware:
     image: clamav/clamav:1.4
     profiles: [files]

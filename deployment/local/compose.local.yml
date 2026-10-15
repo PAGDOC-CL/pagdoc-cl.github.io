@@ -46,6 +46,16 @@ services:
     volumes: [clamav_signatures:/var/lib/clamav]
     environment:
       CLAMAV_NO_MILTERD: 'true'
+      CLAMD_CONF_AlertExceedsMax: 'yes'
+      CLAMD_CONF_AlertEncryptedArchive: 'yes'
+      CLAMD_CONF_AlertEncryptedDoc: 'yes'
+      CLAMD_CONF_StreamMaxLength: 16M
+      CLAMD_CONF_MaxScanSize: 100M
+      CLAMD_CONF_MaxFileSize: 20M
+      CLAMD_CONF_MaxRecursion: '16'
+      CLAMD_CONF_MaxFiles: '1000'
+      CLAMD_CONF_MaxThreads: '2'
+      CLAMD_CONF_ConcurrentDatabaseReload: 'no'
     # The image supplies a ClamD healthcheck. No antivirus port is published.
     restart: unless-stopped
   proxy:

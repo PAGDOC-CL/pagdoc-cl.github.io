@@ -29,3 +29,16 @@ def test_private_startup_rejects_database_without_migrations(tmp_path,monkeypatc
     monkeypatch.setenv('PAGDOC_ENVIRONMENT','production')
     with pytest.raises(RuntimeError,match='Apply reviewed migrations'):
         with TestClient(server.app,base_url='https://testserver'):pass
+
+
+def test_tutorial_videos_are_fictitious_allowlisted_assets_with_range_support():
+    c=TestClient(server.app,base_url='https://testserver')
+    lessons=c.get('/app/assets/tutorial-lessons.json')
+    assert lessons.status_code==200
+    for key,lesson in lessons.json().items():
+        response=c.get('/app/assets/tutorial-'+key+'.mp4',headers={'Range':'bytes=0-127'})
+        assert response.status_code==206 and len(response.content)==128
+        assert response.headers['content-type']=='video/mp4'
+        assert b'ftyp' in response.content
+        assert len(lesson['slides'])>=3
+    assert c.get('/app/assets/tutorial-secrets.mp4').status_code==404

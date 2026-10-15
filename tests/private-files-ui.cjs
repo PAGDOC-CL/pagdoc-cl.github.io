@@ -15,7 +15,8 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
   w.fetch=async(route,options)=>{
    calls.push({route,options});const url=new URL(route,'https://localhost:8443');let status=200,body;
    const payload=typeof options.body==='string'?JSON.parse(options.body):null;
-   if(url.pathname==='/login/branding')body={logo_version:logoVersion,name:logoVersion?'Fictitious Company':undefined};
+   if(url.pathname==='/app/assets/tutorial-lessons.json')body=JSON.parse(fs.readFileSync(path.join(root,'assets/tutorial-lessons.json'),'utf8'));
+   else if(url.pathname==='/login/branding')body={logo_version:logoVersion,name:logoVersion?'Fictitious Company':undefined};
    else if(url.pathname==='/auth/login'){signedIn=true;w.document.cookie='pagdoc_csrf=fictitious-csrf; Path=/; Secure; SameSite=Strict';body={authenticated:true};}
    else if(!signedIn){status=401;body={detail:'Authentication required'};}
    else if(url.pathname==='/ops/onboarding/start'){assert.equal(options.method,'POST');assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');body={show_tutorial:!onboardingSeen&&!payload.legacy_seen};onboardingSeen=true;}
@@ -65,12 +66,12 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  w.eval(fs.readFileSync(path.join(root,'assets/operations.js'),'utf8'));await settle();
  $('login-email').value=me.email;$('login-password').value='fictitious-password';$('login-form').dispatchEvent(new w.Event('submit',{cancelable:true,bubbles:true}));await settle();
  assert($('editor').open);assert($('dialog-title').textContent.includes('Tutorial'));assert($('dialog-detail').textContent.includes('Bienvenido'));
- assert(!d.querySelector('[data-action="tutorial"]'));
- await click('[data-action="guide-next"]');assert($('dialog-detail').textContent.includes('Servicios y centros de trabajo'));assert.equal($('breadcrumb').textContent,'Servicios');
- await click('[data-action="guide-next"]');assert($('dialog-detail').textContent.includes('Planificador de personal'));assert.equal($('breadcrumb').textContent,'Planificador de personal');
+ assert(!d.querySelector('[data-action="tutorial"]'));assert($('tutorial-video').controls);assert(!$('tutorial-video').autoplay);assert($('tutorial-video').querySelector('source').src.endsWith('tutorial-overview.mp4'));assert($('dialog-detail').textContent.includes('Leer los pasos del video'));
+ const firstTutorialVideo=$('tutorial-video');await firstTutorialVideo.play();await click('[data-action="guide-next"]');assert(firstTutorialVideo.paused,'Changing tutorial step pauses the previous video');assert($('dialog-detail').textContent.includes('Servicios y centros de trabajo'));assert.equal($('breadcrumb').textContent,'Servicios');
+ await click('[data-action="guide-next"]');assert($('dialog-detail').textContent.includes('Planificador de personal'));assert.equal($('breadcrumb').textContent,'Planificador de personal');assert($('tutorial-video').querySelector('source').src.endsWith('tutorial-planning-write.mp4'));
  await click('[data-action="guide-next"]');assert.equal($('breadcrumb').textContent,'Empresa y vehículos');
  await click('[data-action="guide-prev"]');assert.equal($('breadcrumb').textContent,'Planificador de personal');
- $('close-dialog').click();w.localStorage.clear();await click('#refresh');assert(!$('editor').open,'The tutorial stays dismissed even after local browser storage is cleared');
+ $('close-dialog').click();w.localStorage.clear();await click('#refresh');assert(!$('tutorial-video'));assert(!$('editor').open,'The tutorial stays dismissed even after local browser storage is cleared');
  assert(d.querySelector('#shell .brand').textContent.includes('Fictitious Company'));assert(d.querySelector('#shell .brand').textContent.includes('Gestionado con PAGDOC'));
  await click('[data-view="files"]');assert($('view').textContent.includes('Empresa y vehículos'));assert($('view').textContent.includes('0 documentos'));
  await click('[data-action="file-new-doc"]');assert($('edit-form').elements.vehicle_id.disabled);

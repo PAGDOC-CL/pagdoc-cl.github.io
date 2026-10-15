@@ -240,7 +240,7 @@ async function handleFileAction(name,id,version){
 function batchGroups(){return [...new Set(batchFiles.map(entry=>entry.group))];}
 function addBatchFiles(files){
  if(batchLocked)fail('Cierra el lote finalizado antes de elegir más archivos.',409);
- const selected=files.map(file=>{const path=file.webkitRelativePath||file.name,parts=path.split('/');if(path.length>200||parts.some(p=>!p||p==='.'||p==='..')||path.includes('\\'))fail('Revisa la ruta: usa nombres de carpeta más cortos, hasta 200 caracteres en total.',422);return {file,path,group:parts.length>1?parts.slice(0,-1).join('/'):'Archivos seleccionados'};});
+ const selected=files.map(file=>{const path=file.webkitRelativePath||file.name,parts=path.split('/');if(path.length>1024||parts.some(p=>!p||p==='.'||p==='..')||path.includes('\\'))fail('Revisa la ruta: usa nombres de carpeta más cortos, hasta 1024 caracteres en total.',422);return {file,path,group:parts.length>1?parts.slice(0,-1).join('/'):'Archivos seleccionados'};});
  const paths=new Set(batchFiles.map(entry=>entry.path));for(const entry of selected){if(paths.has(entry.path))fail('La ruta ya está seleccionada: '+entry.path+'. No se agregó esta selección. Usa carpetas con nombres distintos para distinguir los orígenes.',422);paths.add(entry.path);}
  if(batchFiles.length+selected.length>3000)fail('El máximo es 3000 archivos por carga. Divide las carpetas en grupos más pequeños.',422);
  batchFiles.push(...selected);renderBatchSelection();

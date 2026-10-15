@@ -428,3 +428,50 @@ def test_loose_update_reuses_existing_vehicle_folder_after_confirmation(files):
     docs=c.get('/ops/files/documents',params={'vehicle_id':1}).json()['items']
     assert len(docs)==1 and docs[0]['title']=='Vehiculos/TEST11/Seguros/policy.pdf' and docs[0]['version']==2
     assert c.get(f"/ops/files/documents/{proposed['document_id']}/versions/1/download").content==old
+
+
+def test_long_unicode_paths_upload_filter_and_warned_replace(files):
+    c,_,_=files
+    path='Company/'+('Documentación técnica ampliada/'*25)+'fictitious.pdf'
+    assert 200<len(path)<=1024
+    entry=batch_entry(path=path);plan=batch_preview(c,entry)
+    created=batch_upload(c,entry,plan);assert created.status_code==201,created.text
+    doc_id=created.json()['document_id']
+    assert c.get('/ops/files/documents',params={'path_prefix':path.rsplit('/',1)[0]}).json()['total']==1
+    assert any(item['path']==path.rsplit('/',1)[0] for item in c.get('/ops/files/folders').json()['folders'])
+    with core.SessionLocal() as db:
+        destination=db.scalar(select(file_api.FileDestination).where(file_api.FileDestination.document_id==doc_id))
+        assert len(destination.path_key)==64 and destination.source_path==path
+    entry['sha256']='0'*64;plan=batch_preview(c,entry);assert plan['status']=='replace'
+    assert batch_upload(c,entry,plan,payload=b'%PDF-1.7 new fictitious').status_code==409
+    assert batch_upload(c,entry,plan,payload=b'%PDF-1.7 new fictitious',replace=True).status_code==201
+    for unsafe in ['Company/'+'x'*1024+'/a.pdf','Company/../a.pdf']:
+        assert c.post('/ops/files/batch/preview',json={'entries':[batch_entry(path=unsafe)]}).status_code==422
+    assert file_api.destination_key('COMPANY/ÁREA/A.PDF')==file_api.destination_key('Company/Área/a.pdf')
+
+
+def test_path_migration_preserves_existing_destination_and_refuses_truncation(tmp_path,monkeypatch):
+    from alembic.config import Config
+    from alembic import command
+    from sqlalchemy import create_engine,text
+    import hashlib
+    engine=create_engine('sqlite:///'+str(tmp_path/'migration.sqlite3'))
+    monkeypatch.setenv('PAGDOC_DATABASE_URL',str(engine.url))
+    config=Config('alembic.ini');command.upgrade(config,'0017_file_worker_project')
+    from sqlalchemy.orm import Session
+    with Session(engine) as db:
+        db.add(core.Tenant(id=1,name='Fictitious migration'));db.flush()
+        doc=core.Document(tenant_id=1,title='Company/Legacy/a.pdf',subject_type='company',subject_name='Fictitious migration');db.add(doc);db.flush();doc_id=doc.id
+        db.add(file_api.FileSubject(document_id=doc_id,tenant_id=1,subject_kind='company'))
+        db.add(file_api.FileDestination(document_id=doc_id,tenant_id=1,subject_scope='company',path_key='company/legacy/a.pdf',source_path='Company/Legacy/a.pdf'));db.commit()
+    command.upgrade(config,'head')
+    with engine.connect() as db:
+        row=db.execute(text('SELECT document_id,source_path,path_key FROM file_destinations')).one()
+        assert row==(doc_id,'Company/Legacy/a.pdf',hashlib.sha256(b'company/legacy/a.pdf').hexdigest())
+        assert db.execute(text('SELECT document_id FROM file_document_subjects')).scalar()==doc_id
+    command.downgrade(config,'0017_file_worker_project')
+    with engine.connect() as db:assert db.execute(text('SELECT path_key FROM file_destinations')).scalar()=='company/legacy/a.pdf'
+    command.upgrade(config,'head')
+    with engine.begin() as db:db.execute(text('UPDATE documents SET title=:title'),{'title':'Company/'+'x'*220+'/a.pdf'})
+    with pytest.raises(RuntimeError,match='no data was truncated'):command.downgrade(config,'0017_file_worker_project')
+    engine.dispose()

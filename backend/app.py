@@ -113,7 +113,7 @@ class Document(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
-    title: Mapped[str] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(1024))
     subject_type: Mapped[str] = mapped_column(String(30))
     subject_name: Mapped[str] = mapped_column(String(150))
     expires_on: Mapped[date | None] = mapped_column(Date, nullable=True)

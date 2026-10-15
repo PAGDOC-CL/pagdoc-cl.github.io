@@ -112,7 +112,7 @@ def create_vehicle(data: NewVehicle, user: core.Editor, db: core.Db):
 
 class NewFileDocument(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    title: str = Field(min_length=2, max_length=200)
+    title: str = Field(min_length=2, max_length=1024)
     subject_kind: Literal['company','vehicle','worker','project']
     vehicle_id: int | None = Field(default=None, gt=0)
     worker_id: int | None = Field(default=None, gt=0)
@@ -154,7 +154,7 @@ def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
 
 
 @core.app.get('/ops/files/documents')
-def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=200),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
+def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=1024),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
     query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
     if subject_kind:
         query = query.where(FileSubject.subject_kind == subject_kind)
@@ -395,24 +395,22 @@ class FileDestination(core.Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey('tenants.id'), index=True)
     subject_scope: Mapped[str] = mapped_column(String(40))
-    path_key: Mapped[str] = mapped_column(String(500))
-    source_path: Mapped[str] = mapped_column(String(200))
+    path_key: Mapped[str] = mapped_column(String(64))
+    source_path: Mapped[str] = mapped_column(String(1024))
     document_id: Mapped[int] = mapped_column(ForeignKey('documents.id'), unique=True)
 
 
 def destination_key(path):
     normalized = unicodedata.normalize('NFKC', path).strip()
-    if not normalized or len(path) > 200 or '\\' in normalized or any(ord(c) < 32 or ord(c) == 127 for c in normalized) or any(part in {'', '.', '..'} for part in normalized.split('/')):
-        raise HTTPException(422, 'Revisa la ruta del documento: hasta 200 caracteres, sin rutas absolutas ni segmentos de navegación.')
+    if not normalized or len(path) > 1024 or '\\' in normalized or any(ord(c) < 32 or ord(c) == 127 for c in normalized) or any(part in {'', '.', '..'} for part in normalized.split('/')):
+        raise HTTPException(422, 'Revisa la ruta del documento: hasta 1024 caracteres, sin rutas absolutas ni segmentos de navegación.')
     key = normalized.casefold()
-    if len(key) > 500:
-        raise HTTPException(422, 'La ruta normalizada es demasiado larga.')
-    return key
+    return hashlib.sha256(key.encode('utf-8')).hexdigest()
 
 
 class BatchEntry(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    path: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=1024)
     subject_kind: Literal['company', 'vehicle','worker','project']
     vehicle_id: int | None = Field(default=None, gt=0)
     worker_id: int | None = Field(default=None, gt=0)
@@ -530,7 +528,7 @@ def store_batch_item(db, user, entry, expected_document_id, expected_version, al
 
 
 @core.app.post('/ops/files/batch/item', status_code=201)
-async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, path: str = Query(min_length=1, max_length=200), subject_kind: Literal['company', 'vehicle','worker','project'] = 'company', vehicle_id: int | None = Query(default=None, gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0), expected_document_id: int | None = Query(default=None, gt=0), expected_version: int = Query(ge=0), allow_replace: bool = False):
+async def upload_batch_item(request: Request, user: core.Editor, db: core.Db, path: str = Query(min_length=1, max_length=1024), subject_kind: Literal['company', 'vehicle','worker','project'] = 'company', vehicle_id: int | None = Query(default=None, gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0), expected_document_id: int | None = Query(default=None, gt=0), expected_version: int = Query(ge=0), allow_replace: bool = False):
     require_enabled()
     try:
         entry = BatchEntry(path=path, subject_kind=subject_kind, vehicle_id=vehicle_id,worker_id=worker_id,project_id=project_id, sha256='0' * 64)

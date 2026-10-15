@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0017_file_worker_project"
+EXPECTED_SCHEMA_REVISION = "0018_long_file_paths"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

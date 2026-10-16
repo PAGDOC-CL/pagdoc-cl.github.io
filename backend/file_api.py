@@ -154,6 +154,26 @@ def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
     return {'id': doc.id, 'version': 0, 'review_state': 'pending'}
 
 
+def document_expiry_status(doc,automatic,has_file,today):
+    if doc.expires_on is None:
+        return 'valid' if automatic.get('no_expiry') and has_file else 'no_date'
+    return 'expired' if doc.expires_on<today else 'expiring' if doc.expires_on<=today+timedelta(days=automatic.get('warning_days',30)) else 'valid'
+
+
+@core.app.get('/ops/files/summary')
+def document_summary(user:FileRead,db:core.Db):
+    from document_analysis import FileAnalysis,analysis_payload
+    today=datetime.now(ZoneInfo('America/Santiago')).date()
+    latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).where(DocumentFileVersion.tenant_id==user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
+    rows=db.execute(select(core.Document,DocumentFileVersion.version,FileAnalysis).join(FileSubject,FileSubject.document_id==core.Document.id).join(latest,latest.c.document_id==core.Document.id).join(DocumentFileVersion,(DocumentFileVersion.document_id==core.Document.id)&(DocumentFileVersion.version==latest.c.v)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(core.Document.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id,DocumentFileVersion.tenant_id==user.tenant_id))
+    counts={'valid':0,'expired':0,'expiring':0,'pending':0}
+    for doc,version,row in rows:
+        automatic=analysis_payload(row,doc,version)
+        state=document_expiry_status(doc,automatic,True,today)
+        counts['pending' if state=='no_date' else state]+=1
+    return {'total':sum(counts.values()),'counts':counts,'as_of':today,'basis':'latest_uploaded_documents'}
+
+
 @core.app.get('/ops/files/documents')
 def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=1024),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
     query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
@@ -188,7 +208,7 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
         from document_analysis import current_analysis,analysis_payload
         automatic=analysis_payload(current_analysis(db,user,doc.id,version),doc,version)
         today=datetime.now(ZoneInfo('America/Santiago')).date()
-        expiry_status=('valid' if automatic.get('no_expiry') and file else 'no_date') if doc.expires_on is None else 'expired' if doc.expires_on<today else 'expiring' if doc.expires_on<=today+timedelta(days=automatic.get('warning_days',30)) else 'valid'
+        expiry_status=document_expiry_status(doc,automatic,bool(file),today)
         result.append({'analysis':automatic,'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id,'worker_id':link.worker_id,'project_id':doc.project_id, 'expires_on': doc.expires_on, 'expiry_status': expiry_status, 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
     core.add_audit(db, user, 'document.private_list', 'tenant', user.tenant_id)
     db.commit()

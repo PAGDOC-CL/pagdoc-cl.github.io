@@ -13,7 +13,7 @@ from file_api import FileRead,FileSubject,scoped_document,latest_version,gateway
 from document_tools import extract,ExtractionError
 from zoneinfo import ZoneInfo
 
-ANALYSIS_RULES_VERSION=5
+ANALYSIS_RULES_VERSION=6
 DRUG_VALIDITY_DAYS=30
 
 TYPES={'alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
@@ -53,7 +53,7 @@ def interpret(text,notes=None,method='pdf_text',today=None):
         return values
     issue_labels=r'fecha\s+(?:de\s+)?emision|emitido\s+el'
     issued=dates(issue_labels if kind=='alcohol_drogas' else issue_labels+r'|fecha\s+(?:de\s+)?realizacion')
-    expiry_labels=r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad|caduca(?:\s+el)?|expira(?:\s+el)?|validez\s+hasta|\bvcto\b|\bfecha\s+venc\b|\bfecha\s+(?:de\s+)?vigencia(?:\s+hasta)?|\bvigencia\s+(?:de\s+este\s+(?:certificado|documento)\s+)?(?:es\s+)?hasta(?:\s+el)?(?:\s+dia)?'
+    expiry_labels=r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad|caduca(?:\s+el)?|expira(?:\s+el)?|validez\s+hasta|\bvcto\b|\bfecha\s+venc\b|\bfecha\s+(?:de\s+)?vigencia(?:\s+hasta)?|\bfecha\s+(?:de\s+)?(?:termino|expiracion)|\bvalidez\s*:|\bvigencia\s*:(?=\s*\d)|\bvigencia\s+(?:de\s+este\s+(?:certificado|documento)\s+)?(?:es\s+)?hasta(?:\s+el)?(?:\s+dia)?'
     expires=dates(expiry_labels)
     # PDF table headings may precede a single date on the next line.
     for heading,values in zip(body.splitlines(),body.splitlines()[1:]):
@@ -161,6 +161,17 @@ def confirm_analysis(document_id:int,data:ConfirmAnalysis,user:core.Editor,db:co
     return analysis_payload(row,doc,data.expected_version)
 
 
+def identity_confirmed(name,text,identifier=None):
+    canonical=lambda value:' '.join(re.sub(r'[^a-z0-9]+',' ',normalize(value)).split())
+    expected=canonical(name or '')
+    if expected and re.search(r'(?<![a-z0-9])'+re.escape(expected)+r'(?![a-z0-9])',canonical(text)):return True
+    # Exact registered worker identifier handles reordered names without fuzzy matching.
+    key=re.sub(r'[^0-9K]','',(identifier or '').upper())
+    if identifier and re.fullmatch(r'[0-9 .kK-]+',identifier) and re.fullmatch(r'\d{7,8}[0-9K]',key):
+        return bool(re.search(r'(?<![A-Z0-9])'+r'[ .-]*'.join(key)+r'(?![A-Z0-9])',text.upper()))
+    return False
+
+
 def process_next(db,extractor=extract):
     if not enabled():return False
     latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).group_by(DocumentFileVersion.document_id).subquery()
@@ -197,13 +208,13 @@ def process_next(db,extractor=extract):
         text,notes,method=extractor(payload,file.media_type)
         result=interpret(text,notes,method)
         link=db.get(FileSubject,doc.id)
-        identity_name=None
+        identity_name=None;identity_identifier=None
         if link.subject_kind=='company':identity_name=db.get(core.Tenant,doc.tenant_id).name
-        elif link.subject_kind=='worker':identity_name=db.get(core.Worker,link.worker_id).full_name
+        elif link.subject_kind=='worker':
+            worker=db.get(core.Worker,link.worker_id);identity_name=worker.full_name;identity_identifier=worker.identifier
         elif link.subject_kind=='project':identity_name=db.get(core.Project,doc.project_id).name
         if identity_name:
-            canonical=lambda value:' '.join(re.sub(r'[^a-z0-9]+',' ',normalize(value)).split())
-            if not canonical(identity_name) or not re.search(r'(?<![a-z0-9])'+re.escape(canonical(identity_name))+r'(?![a-z0-9])',canonical(text)):
+            if not identity_confirmed(identity_name,text,identity_identifier):
                 result['warnings'].append('El contenido no confirma el nombre completo del destino. Revisa identidad y fechas.')
                 result['safe_to_apply']=False
         elif link.subject_kind=='vehicle':
@@ -239,7 +250,21 @@ def process_next(db,extractor=extract):
 @core.app.get('/ops/files/analysis/status')
 def analysis_status(user:FileRead,db:core.Db):
     latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).where(DocumentFileVersion.tenant_id==user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
-    rows=db.execute(select(FileAnalysis.status,FileAnalysis.rules_version).select_from(DocumentFileVersion).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
+    rows=db.execute(select(FileAnalysis.status,FileAnalysis.rules_version,FileAnalysis.result_json).select_from(DocumentFileVersion).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
     counts={key:0 for key in ['pending','processing','review','ready','confirmed','no_expiry','superseded']}
-    for status,version in rows:counts['pending' if version is None or version<ANALYSIS_RULES_VERSION else status if status in counts else 'review']+=1
-    return {'total':len(rows),'counts':counts,'rules_version':ANALYSIS_RULES_VERSION,'alcohol_drugs_days':DRUG_VALIDITY_DAYS,'drug_warning_days':7,'as_of':datetime.now(ZoneInfo('America/Santiago')).date()}
+    reasons={key:0 for key in ['ocr','identity','dates','missing_issue','partial','reading','other']}
+    for status,version,result in rows:
+        effective='pending' if version is None or version<ANALYSIS_RULES_VERSION else status if status in counts else 'review'
+        counts[effective]+=1
+        if effective=='review':
+            categories=set()
+            for warning in json.loads(result or '{}').get('warnings',[]):
+                value=normalize(warning)
+                if 'ocr' in value and warning!='OCR con confianza alta.':categories.add('ocr')
+                if 'nombre completo' in value or 'patente del destino' in value:categories.add('identity')
+                if any(word in value for word in ['varias fechas','varias columnas','contrad','difiere','anterior','invalida','futuro','no coinciden']):categories.add('dates')
+                if 'alcohol y drogas' in value and 'emision' in value:categories.add('missing_issue')
+                if 'parcial' in value:categories.add('partial')
+                if 'no se completo' in value or 'no se pudo leer' in value:categories.add('reading')
+            for category in categories or {'other'}:reasons[category]+=1
+    return {'total':len(rows),'counts':counts,'review_reasons':reasons,'remaining':counts['pending']+counts['processing'],'rules_version':ANALYSIS_RULES_VERSION,'alcohol_drugs_days':DRUG_VALIDITY_DAYS,'drug_warning_days':7,'as_of':datetime.now(ZoneInfo('America/Santiago')).date()}

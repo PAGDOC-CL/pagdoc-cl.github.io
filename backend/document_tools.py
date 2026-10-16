@@ -15,7 +15,7 @@ import zipfile
 from storage import validate_office
 
 MAX_TEXT=100_000
-MAX_PAGES=12
+MAX_PAGES=24
 
 
 class ExtractionError(ValueError):pass
@@ -135,6 +135,42 @@ def office_text(data,media):
     return result[:MAX_TEXT],notes
 
 
+def pdf_image_pages(path,directory):
+    target=Path(directory)/'images.txt'
+    limiter=shutil.which('prlimit')
+    if not limiter:raise ExtractionError('El motor privado no está instalado.')
+    with target.open('wb') as output:
+        try:subprocess.run([limiter,'--as=536870912','--cpu=15','--fsize=1048576','--','pdfimages','-list',str(path)],stdout=output,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,timeout=20,check=True,env={'PATH':'/usr/local/bin:/usr/bin:/bin','LC_ALL':'C','HOME':str(directory),'TMPDIR':str(directory)})
+        except (OSError,subprocess.SubprocessError) as exc:raise ExtractionError('No se pudo comprobar las imágenes del PDF.') from exc
+    pages=set()
+    for line in bounded_text(target).splitlines():
+        cells=line.split()
+        if len(cells)>4 and cells[0].isdigit() and cells[3].isdigit() and cells[4].isdigit():
+            width,height=int(cells[3]),int(cells[4])
+            if max(width,height)>=500 and min(width,height)>=150:pages.add(int(cells[0]))
+    return pages
+
+
+def ocr_deep(path,directory,notes):
+    from document_analysis import parse_date,normalize,MONTHS
+    token=r'\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+(?:de\s+)?(?:'+'|'.join(MONTHS)+r')\s+(?:de\s+)?\d{4})\b'
+    readings=[]
+    for mode in (3,6):
+        local=[]
+        try:text=ocr_text(path,directory,local,psm=mode)
+        except ExtractionError:
+            notes.append('OCR: no se completó una de las dos lecturas.');continue
+        signatures=set()
+        for match in re.finditer(token,normalize(text)):
+            parsed=parse_date(match[0]);signatures.add(parsed.isoformat() if parsed else match[0])
+        readings.append((text,local,signatures))
+    if not readings:raise ExtractionError('No se completó la lectura OCR.')
+    chosen=max(readings,key=lambda item:('OCR con confianza alta.' in item[1],len(item[0])))
+    notes.extend(chosen[1])
+    if len(readings)==2 and readings[0][2]!=readings[1][2]:notes.append('OCR: las dos lecturas no coinciden en las fechas; revisar.')
+    return chosen[0]
+
+
 def extract(data,media):
     if media.endswith(('wordprocessingml.document','spreadsheetml.sheet')):
         text,notes=office_text(data,media);return text,notes,'office'
@@ -143,26 +179,27 @@ def extract(data,media):
         notes=[];texts=[];ocr=False
         if media=='application/pdf':
             count=pdf_pages(path,directory)
-            if count>MAX_PAGES:notes.append('Lectura parcial: PDF supera 12 páginas.')
+            if count>MAX_PAGES:notes.append(f'Lectura parcial: PDF supera {MAX_PAGES} páginas.')
+            image_pages=pdf_image_pages(path,directory)
             started=time.monotonic()
             for page in range(1,min(count,MAX_PAGES)+1):
-                if time.monotonic()-started>90:notes.append('Lectura parcial: tiempo máximo alcanzado.');break
+                if time.monotonic()-started>120:notes.append('Lectura parcial: tiempo máximo alcanzado.');break
                 target=Path(directory)/'text.txt'
                 command(['pdftotext','-f',page,'-l',page,'-layout',path,target],directory)
                 text=bounded_text(target)
-                if len(re.sub(r'\s','',text))<30:
-                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));text=ocr_text(image,directory,notes);ocr=True
+                if len(re.sub(r'\s','',text))<30 or page in image_pages:
+                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));scanned=ocr_deep(image,directory,notes);text=text+'\n'+scanned;ocr=True
                 texts.append(text)
                 if sum(map(len,texts))>MAX_TEXT:notes.append('Lectura parcial: texto demasiado largo.');break
         elif media in {'image/png','image/jpeg'}:
-            image_dimensions(data,media);texts.append(ocr_text(path,directory,notes));ocr=True
+            image_dimensions(data,media);texts.append(ocr_deep(path,directory,notes));ocr=True
         else:raise ExtractionError('Formato no admitido.')
         return '\n'.join(texts)[:MAX_TEXT],notes,'ocr' if ocr else 'pdf_text'
 
 
-def ocr_text(path,directory,notes=None):
+def ocr_text(path,directory,notes=None,psm=3):
     target=Path(directory)/'ocr-result'
-    command(['tesseract',path,target,'-l','spa+eng','--psm','3','txt','tsv'],directory,timeout=40)
+    command(['tesseract',path,target,'-l','spa+eng','--psm',str(psm),'txt','tsv'],directory,timeout=40)
     rows=list(csv.DictReader(io.StringIO(bounded_text(target.with_suffix('.tsv'))),delimiter='\t'))
     words=[row for row in rows if row.get('text','').strip()]
     scores=[float(row['conf']) for row in words]

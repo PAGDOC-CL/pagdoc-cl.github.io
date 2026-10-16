@@ -499,3 +499,14 @@ OCR ya no exige confirmación en todos los casos: requiere puntuación mínima d
 ### Resumen documental en Mi operación
 
 Usuarios con permiso de lectura documental ven total de documentos cargados, vigentes, vencidos y por vencer, con gráfico de porcentajes y pendientes de análisis/revisión. El servidor cuenta una vez cada documento privado, solo su última versión, de empresa, trabajadores, vehículos y proyectos; excluye metadatos sin archivo. Los estados comparten el cálculo de las listas documentales y la fecha de Chile. Los documentos sin vencimiento solo cuentan como vigentes cuando su análisis lo confirma; alcohol y drogas usa aviso de 7 días y los demás de 30. Los pendientes forman parte del denominador del gráfico. El resumen se actualiza automáticamente cada 15 segundos mientras Mi operación está visible y no hay un formulario abierto. También consulta al volver a la pestaña, entrar a Mi operación o pulsar Actualizar; refleja cargas de otros usuarios y resultados del analizador sin recargar la página. El resumen no concede acreditación y está limitado a la empresa y los permisos de la sesión.
+
+
+### Revisión ampliada: reglas 6
+
+Al actualizar y arrancar análisis, todas las versiones actuales con reglas anteriores entran de nuevo a la cola. Los análisis automáticos se releen; las fechas confirmadas por personas se conservan y se revisa su política, sin sustituir su decisión por OCR. No se duplican documentos ni versiones y no se requiere volver a cargarlos.
+
+La extracción identifica imágenes de tamaño significativo dentro de PDF aunque tengan texto digital. Usa OCR en dos modos de segmentación (3 y 6), selecciona la lectura de confianza alta y compara las fechas detectadas: desacuerdos, intentos fallidos o baja confianza conservan revisión. Los límites aumentan a 24 páginas por PDF y 120 segundos antes de iniciar la siguiente página (una página en curso puede consumir hasta 150 segundos adicionales). Superar límites queda señalado como lectura parcial. Se conserva el límite de memoria y los datos se procesan en el servidor privado.
+
+El resumen muestra versión de reglas, cola restante y motivos agregados de revisión: OCR, identidad, fechas, emisión de alcohol/drogas, lectura parcial/fallida y otros. Un documento puede presentar varios motivos. Permite comprobar cuándo termina la nueva cola y cuántos casos siguen necesitando revisión. Las cifras reales solo se pueden confirmar en la instancia privada.
+
+Para trabajadores, además del nombre completo, se admite coincidencia exacta del identificador numérico registrado de formato RUT, con separadores opcionales y límites completos. No hay coincidencia difusa de nombres ni se crean identificadores. Esto compara contra la ficha interna; no valida identidad ante organismos externos.

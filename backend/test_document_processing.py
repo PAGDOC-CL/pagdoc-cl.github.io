@@ -383,3 +383,92 @@ def test_document_summary_counts_current_files_all_modules_and_drug_window(files
     assert c.get('/ops/files/summary').status_code==403
     c.post('/auth/logout')
     assert c.get('/ops/files/summary').status_code==401
+
+
+
+@pytest.mark.parametrize('label',['Vigencia:','Fecha de término:','Fecha de expiración:','Validez:'])
+def test_additional_explicit_expiry_labels(label):
+    result=analysis.interpret('Certificado ficticio. '+label+' 15/10/2027')
+    assert result['expires_on']=='2027-10-15' and result['safe_to_apply']
+
+
+@pytest.mark.parametrize('second,conflict',[
+    ('Certificado. Vence 15/10/2027',False),
+    ('Certificado. Vence 16/10/2027',True),
+    ('Certificado sin fecha legible',True),
+])
+def test_deep_ocr_second_layout_and_date_disagreements(tmp_path,monkeypatch,second,conflict):
+    import document_tools as tools
+    modes=[]
+    def fake_ocr(path,directory,notes,psm=3):
+        modes.append(psm)
+        notes.append('OCR con confianza insuficiente: revisar lectura.' if psm==3 else 'OCR con confianza alta.')
+        return 'Certificado. Vence 15/10/2027' if psm==3 else second
+    monkeypatch.setattr(tools,'ocr_text',fake_ocr)
+    notes=[];text=tools.ocr_deep(tmp_path/'scan.png',tmp_path,notes)
+    assert modes==[3,6] and text==second
+    result=analysis.interpret(text,notes,'ocr')
+    assert result['safe_to_apply'] is (not conflict)
+    if conflict:assert any('no coinciden' in note for note in notes)
+
+
+def test_deep_ocr_partial_failure_never_automatically_applies(tmp_path,monkeypatch):
+    import document_tools as tools
+    def fake_ocr(path,directory,notes,psm=3):
+        if psm==6:raise tools.ExtractionError('timeout')
+        notes.append('OCR con confianza alta.');return 'Certificado Vence 15/10/2027'
+    monkeypatch.setattr(tools,'ocr_text',fake_ocr)
+    notes=[];text=tools.ocr_deep(tmp_path/'scan.png',tmp_path,notes)
+    assert not analysis.interpret(text,notes,'ocr')['safe_to_apply']
+
+
+def test_hybrid_pdf_reads_raster_dates_with_long_digital_text(monkeypatch):
+    import document_tools as tools
+    monkeypatch.setattr(tools,'pdf_pages',lambda *_:1)
+    monkeypatch.setattr(tools,'pdf_image_pages',lambda *_:{1})
+    def fake_command(args,directory,timeout=35):
+        Path(args[-1]).write_text('Certificado ficticio. Nombre y texto digital sin fecha.'*3)
+    monkeypatch.setattr(tools,'command',fake_command)
+    monkeypatch.setattr(tools,'raster_pdf',lambda *_,**kw:b'fake bounded raster')
+    def fake_deep(path,directory,notes):
+        notes.append('OCR con confianza alta.');return 'Vigente hasta 15/10/2027'
+    monkeypatch.setattr(tools,'ocr_deep',fake_deep)
+    text,notes,method=tools.extract(b'%PDF-fictitious','application/pdf')
+    assert 'Nombre y texto digital' in text and '15/10/2027' in text and method=='ocr'
+    assert analysis.interpret(text,notes,method)['safe_to_apply']
+
+
+def test_pdf_inventory_detects_large_raster_regions(tmp_path,monkeypatch):
+    import document_tools as tools
+    def fake_run(args,**kwargs):
+        kwargs['stdout'].write(b'page num type width height\n1 0 image 100 100\n2 1 image 1800 2400\n3 2 image 900 200\n')
+    monkeypatch.setattr(tools.subprocess,'run',fake_run)
+    assert tools.pdf_image_pages(tmp_path/'test.pdf',tmp_path)=={2,3}
+
+
+def test_rules_six_reprocesses_automatic_analysis_and_reports_causes(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity).status_code==201
+    with core.SessionLocal() as db:
+        version=db.scalar(select(analysis.DocumentFileVersion).where(analysis.DocumentFileVersion.document_id==identity))
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=identity,file_version_id=version.id,status='review',rules_version=5,result_json='{}'));db.commit()
+    progress=c.get('/ops/files/analysis/status').json()
+    assert progress['total']==1 and progress['remaining']==1
+    with core.SessionLocal() as db:
+        assert analysis.process_next(db,extractor=lambda *_:('Certificado. Demo One. Vence 15/10/2027',['OCR con confianza insuficiente: revisar lectura.'],'ocr'))
+    progress=c.get('/ops/files/analysis/status').json()
+    assert progress['remaining']==0 and progress['counts']['review']==1
+    assert progress['review_reasons']['ocr']==1
+    with core.SessionLocal() as db:assert not analysis.process_next(db)
+
+
+
+@pytest.mark.parametrize('name,text,identifier,expected',[
+    ('Persona Ficticia','Certificado Persona Ficticia',None,True),
+    ('Persona Ficticia','Certificado Ficticia Persona. RUT 12.345.678-5','12345678-5',True),
+    ('Persona Ficticia','Certificado Ficticia Persona. RUT 12.345.678-6','12345678-5',False),
+    ('Persona Ficticia','Certificado RUT 1123456785','12345678-5',False),
+    ('Persona Ficticia','Certificado RUT 12345678-5A','12345678-5',False),
+    ('Persona Ficticia','Otra persona',None,False),
+])
+def test_exact_worker_identifier_handles_name_order_without_fuzzy_matching(name,text,identifier,expected):
+    assert analysis.identity_confirmed(name,text,identifier) is expected

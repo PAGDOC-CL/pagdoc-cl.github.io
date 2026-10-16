@@ -294,3 +294,59 @@ def test_clear_expiry_is_independent_of_general_classification():
     assert result['document_type']=='sin_clasificar' and result['safe_to_apply']
     result=analysis.interpret('Examen de drogas y procedimiento. Fecha de vencimiento: 31/03/2027')
     assert not result['safe_to_apply']
+
+
+@pytest.mark.parametrize('label',[
+    'La vigencia de este certificado es hasta el día',
+    'Vigencia hasta el día',
+    'Vigencia de este documento hasta',
+])
+def test_worker_certificate_narrative_validity(label):
+    result=analysis.interpret('Certificado de aprobación. '+label+' 09 de Septiembre de 2028.')
+    assert result['expires_on']=='2028-09-09'
+    assert result['safe_to_apply'] and not result['no_expiry']
+
+
+def test_worker_ppe_delivery_date_is_not_expiration():
+    result=analysis.interpret('FORMULARIO DE ENTREGA DE ELEMENTOS DE PROTECCION PERSONAL. Fecha: 15-06-2026. FECHA ENTREGA 15-06-2026')
+    assert result['expires_on'] is None and result['no_expiry']
+
+
+def test_worker_narrative_expiry_unreadable_requires_review():
+    result=analysis.interpret('Certificado. La vigencia de este certificado es hasta el día [ilegible]')
+    assert not result['no_expiry'] and not result['safe_to_apply']
+
+
+@pytest.mark.parametrize('kind,label',[
+    ('Examen preocupacional','Fecha de vigencia'),
+    ('Evaluación preocupacional','Vigente hasta'),
+    ('Examen ocupacional','Vencimiento'),
+])
+def test_worker_occupational_explicit_validity(kind,label):
+    result=analysis.interpret(kind+'. '+label+': 15/10/2027', ['OCR con confianza alta.'], 'ocr')
+    assert result['document_type']=='examen_ocupacional'
+    assert result['expires_on']=='2027-10-15' and result['safe_to_apply']
+
+
+def test_high_confidence_ocr_preserves_drug_rule_and_low_confidence_review():
+    text='Alcohol y drogas. Fecha de emisión: 01/10/2026'
+    result=analysis.interpret(text,['OCR con confianza alta.'],'ocr',today=date(2026,10,16))
+    assert result['expires_on']=='2026-10-31' and result['safe_to_apply']
+    result=analysis.interpret(text,['OCR con confianza insuficiente: revisar lectura.'],'ocr')
+    assert not result['safe_to_apply'] and not result['no_expiry']
+    assert not analysis.interpret('Carta sin fechas',['OCR con confianza insuficiente: revisar lectura.'],'ocr')['no_expiry']
+
+
+@pytest.mark.parametrize('score,numeric_score,expected',[(96,96,True),(96,70,False),(60,96,False),(96,None,True)])
+def test_ocr_confidence_gate_uses_numeric_words_and_overall_quality(tmp_path,monkeypatch,score,numeric_score,expected):
+    import document_tools as tools
+    def fake_command(args,directory,timeout):
+        target=tmp_path/'ocr-result'
+        target.with_suffix('.txt').write_text('Certificado ficticio')
+        rows='level\tconf\ttext\n5\t'+str(score)+'\tCertificado\n'
+        if numeric_score is not None:rows+='5\t'+str(numeric_score)+'\t15/10/2027\n'
+        target.with_suffix('.tsv').write_text(rows)
+    monkeypatch.setattr(tools,'command',fake_command)
+    notes=[]
+    assert tools.ocr_text(tmp_path/'source.png',tmp_path,notes)=='Certificado ficticio'
+    assert ('OCR con confianza alta.' in notes) is expected

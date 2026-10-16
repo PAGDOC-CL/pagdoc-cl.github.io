@@ -13,7 +13,7 @@ from file_api import FileRead,FileSubject,scoped_document,latest_version,gateway
 from document_tools import extract,ExtractionError
 from zoneinfo import ZoneInfo
 
-ANALYSIS_RULES_VERSION=2
+ANALYSIS_RULES_VERSION=3
 DRUG_VALIDITY_DAYS=30
 
 TYPES={'alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
@@ -37,7 +37,7 @@ def parse_date(value):
 
 
 def interpret(text,notes=None,method='pdf_text',today=None):
-    today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=normalize(text)
+    today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text))
     patterns=[('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato de trabajo|anexo de contrato'),('cotizaciones',r'cotizaciones previsionales|previred')]
     matches=[kind for kind,pattern in patterns if re.search(pattern,body)]
     kind=matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'
@@ -53,7 +53,7 @@ def interpret(text,notes=None,method='pdf_text',today=None):
         return values
     issue_labels=r'fecha\s+(?:de\s+)?emision|emitido\s+el'
     issued=dates(issue_labels if kind=='alcohol_drogas' else issue_labels+r'|fecha\s+(?:de\s+)?realizacion')
-    expires=dates(r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|vence\s+el|fecha\s+(?:de\s+)?caducidad')
+    expires=dates(r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad')
     if len(issued)>1:warnings.append('Varias fechas de emisión; requiere revisión.')
     if len(expires)>1:warnings.append('Varias fechas de vencimiento; requiere revisión.')
     issue=issued[0] if len(issued)==1 else None;expiry=expires[0] if len(expires)==1 else None

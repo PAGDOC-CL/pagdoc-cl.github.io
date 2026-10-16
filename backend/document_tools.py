@@ -151,17 +151,23 @@ def extract(data,media):
                 command(['pdftotext','-f',page,'-l',page,'-layout',path,target],directory)
                 text=bounded_text(target)
                 if len(re.sub(r'\s','',text))<30:
-                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));text=ocr_text(image,directory);ocr=True
+                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));text=ocr_text(image,directory,notes);ocr=True
                 texts.append(text)
                 if sum(map(len,texts))>MAX_TEXT:notes.append('Lectura parcial: texto demasiado largo.');break
         elif media in {'image/png','image/jpeg'}:
-            image_dimensions(data,media);texts.append(ocr_text(path,directory));ocr=True
+            image_dimensions(data,media);texts.append(ocr_text(path,directory,notes));ocr=True
         else:raise ExtractionError('Formato no admitido.')
-        if ocr:notes.append('Lectura OCR: las fechas requieren confirmación visual.')
         return '\n'.join(texts)[:MAX_TEXT],notes,'ocr' if ocr else 'pdf_text'
 
 
-def ocr_text(path,directory):
+def ocr_text(path,directory,notes=None):
     target=Path(directory)/'ocr-result'
-    command(['tesseract',path,target,'-l','spa+eng','--psm','3'],directory,timeout=40)
+    command(['tesseract',path,target,'-l','spa+eng','--psm','3','txt','tsv'],directory,timeout=40)
+    rows=list(csv.DictReader(io.StringIO(bounded_text(target.with_suffix('.tsv'))),delimiter='\t'))
+    words=[row for row in rows if row.get('text','').strip()]
+    scores=[float(row['conf']) for row in words]
+    numeric=[float(row['conf']) for row in words if re.search(r'\d',row['text'])]
+    clear=bool(scores) and min(scores)>=60 and sum(scores)/len(scores)>=85 and (not numeric or min(numeric)>=90)
+    if notes is not None:
+        notes.append('OCR con confianza alta.' if clear else 'OCR con confianza insuficiente: revisar lectura.')
     return bounded_text(target.with_suffix('.txt'))

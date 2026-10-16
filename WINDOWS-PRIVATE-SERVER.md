@@ -487,3 +487,10 @@ Las reglas 4 se aplican a los archivos de empresa, trabajadores, vehículos y pr
 Un archivo leído sin vencimiento identificado queda **Vigente · sin vencimiento registrado**, según política interna. No se inventa una fecha de emisión o vencimiento ni se aprueba la acreditación. Un archivo pendiente de análisis, ilegible, parcial o con indicios de vencimiento que no se pudieron interpretar no se declara sin vencimiento. Alcohol y drogas conserva emisión + 30 días; sin emisión clara requiere revisión.
 
 Con vencimiento verificado, el semáforo es verde fuera del período de aviso, amarillo durante los últimos 30 días (7 para alcohol y drogas) y rojo desde el día siguiente al vencimiento. La lectura OCR de fechas sigue requiriendo comprobación; las tablas con fechas contradictorias o varias columnas de fechas no se resuelven por adivinación.
+
+
+### Reglas 5: vigencia de trabajadores y lectura OCR
+
+Reconoce vigencias escritas como «la vigencia de este certificado es hasta el día» y «fecha de vigencia». Una fecha de entrega de EPP no se transforma en vencimiento. Alcohol y drogas conserva 30 días desde emisión explícita. Los exámenes ocupacionales conservan su vencimiento explícito.
+
+OCR ya no exige confirmación en todos los casos: requiere puntuación mínima de 60 por palabra, promedio de 85 y mínimo de 90 en todos los elementos numéricos; también exige identidad coincidente y ausencia de contradicciones o lectura parcial. Estas puntuaciones no garantizan exactitud. La lectura de baja confianza queda para revisión, también cuando no detecta vencimiento. Los documentos leídos completamente sin vencimiento quedan vigentes sin inventar una fecha. Las fechas confirmadas manualmente se conservan; las demás versiones actuales se reprocesan sin recarga.

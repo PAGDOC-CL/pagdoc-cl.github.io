@@ -13,7 +13,7 @@ from file_api import FileRead,FileSubject,scoped_document,latest_version,gateway
 from document_tools import extract,ExtractionError
 from zoneinfo import ZoneInfo
 
-ANALYSIS_RULES_VERSION=4
+ANALYSIS_RULES_VERSION=5
 DRUG_VALIDITY_DAYS=30
 
 TYPES={'alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
@@ -38,7 +38,7 @@ def parse_date(value):
 
 def interpret(text,notes=None,method='pdf_text',today=None):
     today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text));body=re.sub(r'(?<=\d) *([-/.]) *(?=\d)',r'\1',body)
-    patterns=[('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato de trabajo|anexo de contrato'),('cotizaciones',r'cotizaciones previsionales|previred')]
+    patterns=[('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica|evaluacion(?:es)?\s+(?:pre)?ocupacional'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato de trabajo|anexo de contrato'),('cotizaciones',r'cotizaciones previsionales|previred')]
     matches=[kind for kind,pattern in patterns if re.search(pattern,body)]
     kind=matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'
     if len(matches)>1:warnings.append('Se detectaron varios tipos documentales; revisar clasificación.')
@@ -53,7 +53,7 @@ def interpret(text,notes=None,method='pdf_text',today=None):
         return values
     issue_labels=r'fecha\s+(?:de\s+)?emision|emitido\s+el'
     issued=dates(issue_labels if kind=='alcohol_drogas' else issue_labels+r'|fecha\s+(?:de\s+)?realizacion')
-    expiry_labels=r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad|caduca(?:\s+el)?|expira(?:\s+el)?|validez\s+hasta|\bvcto\b|\bfecha\s+venc\b'
+    expiry_labels=r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad|caduca(?:\s+el)?|expira(?:\s+el)?|validez\s+hasta|\bvcto\b|\bfecha\s+venc\b|\bfecha\s+(?:de\s+)?vigencia(?:\s+hasta)?|\bvigencia\s+(?:de\s+este\s+(?:certificado|documento)\s+)?(?:es\s+)?hasta(?:\s+el)?(?:\s+dia)?'
     expires=dates(expiry_labels)
     # PDF table headings may precede a single date on the next line.
     for heading,values in zip(body.splitlines(),body.splitlines()[1:]):
@@ -82,12 +82,12 @@ def interpret(text,notes=None,method='pdf_text',today=None):
     periods=set(int(n) for n in re.findall(r'vigencia\s*[:|]?\s*(\d{1,4})\s*dias',body))
     if kind!='alcohol_drogas' and expiry is None and issue and len(periods)==1:
         expiry=issue+timedelta(days=next(iter(periods)));warnings.append('Fecha propuesta desde un plazo escrito: confirmar su regla de cómputo.')
-    if method=='ocr' and not any('OCR' in item for item in warnings):warnings.append('Lectura OCR: confirmar fechas visualmente.')
+    if method=='ocr' and 'OCR con confianza alta.' not in warnings and not any('OCR' in item for item in warnings):warnings.append('Lectura OCR: confirmar fechas visualmente.')
     if not text.strip():warnings.append('No se pudo leer el contenido.')
     expiry_context=re.sub(r'\bsin\s+(?:fecha\s+de\s+)?vencimiento\b|\bvencimiento\s*:?\s*no\s+aplica\b','',body)
-    no_expiry=bool(text.strip()) and 'alcohol_drogas' not in matches and not expiry and not re.search(expiry_labels,expiry_context) and not any('OCR' not in note for note in (notes or []))
+    no_expiry=bool(text.strip()) and 'alcohol_drogas' not in matches and not expiry and not re.search(expiry_labels,expiry_context) and not any(note!='OCR con confianza alta.' for note in (notes or []))
     classification_notes={'Se detectaron varios tipos documentales; revisar clasificación.','No se identificó un tipo documental único.'}
-    blocking=[warning for warning in warnings if warning not in classification_notes or 'alcohol_drogas' in matches]
+    blocking=[warning for warning in warnings if warning!='OCR con confianza alta.' and (warning not in classification_notes or 'alcohol_drogas' in matches)]
     return {'no_expiry':no_expiry,'rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not blocking}
 
 

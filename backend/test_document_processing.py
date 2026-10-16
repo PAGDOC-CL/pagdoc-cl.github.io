@@ -287,3 +287,10 @@ def test_spaced_numeric_dates_and_mixed_table_columns():
     assert result['expires_on']=='2027-03-31' and result['safe_to_apply']
     result=analysis.interpret('Certificado\nVENCIMIENTO FECHA EMISION\n31/03/2027')
     assert result['expires_on'] is None and not result['no_expiry']
+
+
+def test_clear_expiry_is_independent_of_general_classification():
+    result=analysis.interpret('Documento general. Fecha de vencimiento: 31/03/2027')
+    assert result['document_type']=='sin_clasificar' and result['safe_to_apply']
+    result=analysis.interpret('Examen de drogas y procedimiento. Fecha de vencimiento: 31/03/2027')
+    assert not result['safe_to_apply']

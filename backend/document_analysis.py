@@ -86,7 +86,9 @@ def interpret(text,notes=None,method='pdf_text',today=None):
     if not text.strip():warnings.append('No se pudo leer el contenido.')
     expiry_context=re.sub(r'\bsin\s+(?:fecha\s+de\s+)?vencimiento\b|\bvencimiento\s*:?\s*no\s+aplica\b','',body)
     no_expiry=bool(text.strip()) and 'alcohol_drogas' not in matches and not expiry and not re.search(expiry_labels,expiry_context) and not any('OCR' not in note for note in (notes or []))
-    return {'no_expiry':no_expiry,'rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not warnings}
+    classification_notes={'Se detectaron varios tipos documentales; revisar clasificación.','No se identificó un tipo documental único.'}
+    blocking=[warning for warning in warnings if warning not in classification_notes or 'alcohol_drogas' in matches]
+    return {'no_expiry':no_expiry,'rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not blocking}
 
 
 class FileAnalysis(core.Base):

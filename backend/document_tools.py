@@ -50,8 +50,8 @@ def pdf_pages(path,directory):
     return count
 
 
-def raster_pdf(path,page,directory):
-    command(['pdftoppm','-f',page,'-l',page,'-singlefile','-scale-to','1800','-png',path,Path(directory)/'page'],directory)
+def raster_pdf(path,page,directory,scale=1800):
+    command(['pdftoppm','-f',page,'-l',page,'-singlefile','-scale-to',str(scale),'-png',path,Path(directory)/'page'],directory)
     result=Path(directory)/'page.png'
     if not result.exists() or result.stat().st_size>16_000_000:raise ExtractionError('Vista previa demasiado grande.')
     return result.read_bytes()
@@ -151,7 +151,7 @@ def extract(data,media):
                 command(['pdftotext','-f',page,'-l',page,'-layout',path,target],directory)
                 text=bounded_text(target)
                 if len(re.sub(r'\s','',text))<30:
-                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory));text=ocr_text(image,directory);ocr=True
+                    image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));text=ocr_text(image,directory);ocr=True
                 texts.append(text)
                 if sum(map(len,texts))>MAX_TEXT:notes.append('Lectura parcial: texto demasiado largo.');break
         elif media in {'image/png','image/jpeg'}:

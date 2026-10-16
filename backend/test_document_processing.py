@@ -247,3 +247,50 @@ def test_drug_traffic_lights_use_last_seven_days(days,light):
     today=analysis.datetime.now(analysis.ZoneInfo('America/Santiago')).date()
     row=SimpleNamespace(status='ready',result_json=json.dumps({'document_type':'alcohol_drogas'}))
     assert analysis.analysis_payload(row,SimpleNamespace(expires_on=today+timedelta(days=days)),1)['traffic_light']==light
+
+
+@pytest.mark.parametrize('label',['VÁLIDO HASTA','PERIODO / VENCIMIENTO','CADUCA EL','EXPIRA EL','VALIDEZ HASTA','VCTO','FECHA VENC'])
+def test_expiry_table_headings_on_previous_line(label):
+    result=analysis.interpret('Permiso de circulacion\n'+label+'     PLACA UNICA\n31-03-2027     TEST11')
+    assert result['expires_on']=='2027-03-31' and result['safe_to_apply']
+
+
+def test_ambiguous_table_dates_do_not_become_no_expiry():
+    result=analysis.interpret('Certificado\nVÁLIDO HASTA FECHA EMISION\n31/03/2027 01/02/2026')
+    assert not result['safe_to_apply'] and not result['no_expiry']
+
+
+@pytest.mark.parametrize('text',['Carta simple sin fechas','Procedimiento. Fecha de emisión: 01/02/2026','Lista de verificacion sin vencimiento indicado'])
+def test_internal_policy_no_expiry_without_inventing_dates(text):
+    result=analysis.interpret(text)
+    assert result['no_expiry'] and result['expires_on'] is None
+
+
+@pytest.mark.parametrize('text,notes',[('',None),('Alcohol y drogas sin fecha',None),('Certificado VENCE ilegible',None),('Carta simple',['Lectura parcial: PDF supera 12 páginas.'])])
+def test_missing_or_failed_reading_is_not_no_expiry(text,notes):
+    assert not analysis.interpret(text,notes)['no_expiry']
+
+
+def test_no_expiry_policy_applies_existing_private_file_and_preserves_review(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity,payload=pdf_document()).status_code==201
+    with core.SessionLocal() as db:
+        assert analysis.process_next(db,extractor=lambda *_:('Demo One. Carta simple sin fechas',[],'pdf_text'))
+    row=c.get('/ops/files/documents').json()['items'][0]
+    assert row['expiry_status']=='valid' and row['expires_on'] is None
+    assert row['analysis']['no_expiry'] and row['analysis']['traffic_light']=='valid'
+    assert row['review_state']=='pending'
+    assert c.get('/ops/files/analysis/status').json()['counts']['no_expiry']==1
+
+
+def test_spaced_numeric_dates_and_mixed_table_columns():
+    result=analysis.interpret('Certificado. Válido hasta 31 / 03 / 2027')
+    assert result['expires_on']=='2027-03-31' and result['safe_to_apply']
+    result=analysis.interpret('Certificado\nVENCIMIENTO FECHA EMISION\n31/03/2027')
+    assert result['expires_on'] is None and not result['no_expiry']
+
+
+def test_clear_expiry_is_independent_of_general_classification():
+    result=analysis.interpret('Documento general. Fecha de vencimiento: 31/03/2027')
+    assert result['document_type']=='sin_clasificar' and result['safe_to_apply']
+    result=analysis.interpret('Examen de drogas y procedimiento. Fecha de vencimiento: 31/03/2027')
+    assert not result['safe_to_apply']

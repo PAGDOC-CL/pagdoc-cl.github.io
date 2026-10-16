@@ -13,7 +13,7 @@ from file_api import FileRead,FileSubject,scoped_document,latest_version,gateway
 from document_tools import extract,ExtractionError
 from zoneinfo import ZoneInfo
 
-ANALYSIS_RULES_VERSION=3
+ANALYSIS_RULES_VERSION=4
 DRUG_VALIDITY_DAYS=30
 
 TYPES={'alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
@@ -24,7 +24,7 @@ def normalize(value):return ''.join(c for c in unicodedata.normalize('NFKD',valu
 
 
 def parse_date(value):
-    value=value.strip()
+    value=re.sub(r'(?<=\d)\s*([-/.])\s*(?=\d)',r'\1',value.strip())
     try:
         if re.fullmatch(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}',value):year,month,day=map(int,re.split('[-/]',value))
         elif re.fullmatch(r'\d{1,2}[-/.]\d{1,2}[-/.]\d{4}',value):day,month,year=map(int,re.split('[-/.]',value))
@@ -37,7 +37,7 @@ def parse_date(value):
 
 
 def interpret(text,notes=None,method='pdf_text',today=None):
-    today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text))
+    today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text));body=re.sub(r'(?<=\d) *([-/.]) *(?=\d)',r'\1',body)
     patterns=[('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato de trabajo|anexo de contrato'),('cotizaciones',r'cotizaciones previsionales|previred')]
     matches=[kind for kind,pattern in patterns if re.search(pattern,body)]
     kind=matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'
@@ -53,7 +53,18 @@ def interpret(text,notes=None,method='pdf_text',today=None):
         return values
     issue_labels=r'fecha\s+(?:de\s+)?emision|emitido\s+el'
     issued=dates(issue_labels if kind=='alcohol_drogas' else issue_labels+r'|fecha\s+(?:de\s+)?realizacion')
-    expires=dates(r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad')
+    expiry_labels=r'fecha\s+(?:de\s+)?vencimiento|vencimiento|valido\s+hasta|vigente\s+hasta|\bvence(?:\s+el)?\b|fecha\s+(?:de\s+)?caducidad|caduca(?:\s+el)?|expira(?:\s+el)?|validez\s+hasta|\bvcto\b|\bfecha\s+venc\b'
+    expires=dates(expiry_labels)
+    # PDF table headings may precede a single date on the next line.
+    for heading,values in zip(body.splitlines(),body.splitlines()[1:]):
+        if re.search(expiry_labels,heading) and not re.search(token,heading):
+            if re.search(r'emision|realizacion|nacimiento',heading):
+                warnings.append('Tabla con varias columnas de fechas; revisar asociación.')
+                continue
+            candidates=[parse_date(m[0]) for m in re.finditer(token,values)]
+            candidates=[value for value in candidates if value is not None]
+            if len(set(candidates))==1 and candidates[0] not in expires:expires.append(candidates[0])
+            elif len(set(candidates))>1:warnings.append('Tabla con varias fechas posibles de vencimiento; revisar.')
     if len(issued)>1:warnings.append('Varias fechas de emisión; requiere revisión.')
     if len(expires)>1:warnings.append('Varias fechas de vencimiento; requiere revisión.')
     issue=issued[0] if len(issued)==1 else None;expiry=expires[0] if len(expires)==1 else None
@@ -73,7 +84,11 @@ def interpret(text,notes=None,method='pdf_text',today=None):
         expiry=issue+timedelta(days=next(iter(periods)));warnings.append('Fecha propuesta desde un plazo escrito: confirmar su regla de cómputo.')
     if method=='ocr' and not any('OCR' in item for item in warnings):warnings.append('Lectura OCR: confirmar fechas visualmente.')
     if not text.strip():warnings.append('No se pudo leer el contenido.')
-    return {'rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not warnings}
+    expiry_context=re.sub(r'\bsin\s+(?:fecha\s+de\s+)?vencimiento\b|\bvencimiento\s*:?\s*no\s+aplica\b','',body)
+    no_expiry=bool(text.strip()) and 'alcohol_drogas' not in matches and not expiry and not re.search(expiry_labels,expiry_context) and not any('OCR' not in note for note in (notes or []))
+    classification_notes={'Se detectaron varios tipos documentales; revisar clasificación.','No se identificó un tipo documental único.'}
+    blocking=[warning for warning in warnings if warning not in classification_notes or 'alcohol_drogas' in matches]
+    return {'no_expiry':no_expiry,'rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not blocking}
 
 
 class FileAnalysis(core.Base):
@@ -100,8 +115,8 @@ def analysis_payload(row,doc,version):
         if datetime.now(timezone.utc)-claimed>timedelta(minutes=10):status='interrupted'
     today=datetime.now(ZoneInfo('America/Santiago')).date()
     warning_days=7 if result.get('document_type')=='alcohol_drogas' else 30
-    traffic='expired' if doc.expires_on and doc.expires_on<today else 'valid' if status in {'ready','confirmed'} and doc.expires_on and doc.expires_on>today+timedelta(days=warning_days) else 'expiring' if status in {'ready','confirmed'} and doc.expires_on else 'warning'
-    return {'expiry_rule':result.get('expiry_rule'),'validity_days':result.get('validity_days'),'document_expires_on':result.get('document_expires_on'),'warning_days':warning_days,'status':status,'version':version,'traffic_light':traffic,'document_type':result.get('document_type','sin_clasificar'),'type_label':TYPES.get(result.get('document_type'),'Sin clasificar'),'issued_on':result.get('issued_on'),'proposed_expires_on':result.get('expires_on'),'revision':result.get('revision',0),'method':result.get('method'),'warnings':result.get('warnings',[]),'expires_on':doc.expires_on}
+    traffic='expired' if doc.expires_on and doc.expires_on<today else 'valid' if status in {'ready','confirmed'} and doc.expires_on and doc.expires_on>today+timedelta(days=warning_days) else 'expiring' if status in {'ready','confirmed'} and doc.expires_on else 'valid' if status=='no_expiry' and version>0 else 'warning'
+    return {'no_expiry':status=='no_expiry','expiry_rule':result.get('expiry_rule'),'validity_days':result.get('validity_days'),'document_expires_on':result.get('document_expires_on'),'warning_days':warning_days,'status':status,'version':version,'traffic_light':traffic,'document_type':result.get('document_type','sin_clasificar'),'type_label':TYPES.get(result.get('document_type'),'Sin clasificar'),'issued_on':result.get('issued_on'),'proposed_expires_on':result.get('expires_on'),'revision':result.get('revision',0),'method':result.get('method'),'warnings':result.get('warnings',[]),'expires_on':doc.expires_on}
 
 
 @core.app.get('/ops/files/documents/{document_id}/analysis')
@@ -207,6 +222,8 @@ def process_next(db,extractor=extract):
     if row.status=='confirmed':return True
     if latest_version(db,identity[2],doc.id)!=identity[3]:
         row.status='superseded'
+    elif result.get('no_expiry') and doc.expires_on is None:
+        row.status='no_expiry'
     elif result['safe_to_apply']:
         proposed=date.fromisoformat(result['expires_on'])
         if doc.expires_on is None or doc.expires_on==proposed or (previous and previous.get('expires_on')==doc.expires_on.isoformat() and result.get('expiry_rule')=='emision_mas_30_dias'):
@@ -223,6 +240,6 @@ def process_next(db,extractor=extract):
 def analysis_status(user:FileRead,db:core.Db):
     latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).where(DocumentFileVersion.tenant_id==user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
     rows=db.execute(select(FileAnalysis.status,FileAnalysis.rules_version).select_from(DocumentFileVersion).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
-    counts={key:0 for key in ['pending','processing','review','ready','confirmed','superseded']}
+    counts={key:0 for key in ['pending','processing','review','ready','confirmed','no_expiry','superseded']}
     for status,version in rows:counts['pending' if version is None or version<ANALYSIS_RULES_VERSION else status if status in counts else 'review']+=1
     return {'total':len(rows),'counts':counts,'rules_version':ANALYSIS_RULES_VERSION,'alcohol_drugs_days':DRUG_VALIDITY_DAYS,'drug_warning_days':7,'as_of':datetime.now(ZoneInfo('America/Santiago')).date()}

@@ -478,3 +478,12 @@ bash deployment/local/control.sh remote-disable
 ```
 
 `remote-disable` retira la entrada privada y restaura la publicación solo local, conservando los datos. Si cambió la IP de NetBird, `start` se detiene antes de recrear servicios y solicita actualizar con `remote-enable`. La configuración no afirma que hay acceso remoto operativo hasta comprobarlo desde otro equipo de la red privada.
+
+
+### Vigencia interna en todos los módulos
+
+Las reglas 4 se aplican a los archivos de empresa, trabajadores, vehículos y proyectos, también a las versiones actuales ya cargadas. El analizador vuelve a leer los resultados de reglas anteriores sin volver a subir archivos. Las fechas verificadas y las revisiones humanas se conservan.
+
+Un archivo leído sin vencimiento identificado queda **Vigente · sin vencimiento registrado**, según política interna. No se inventa una fecha de emisión o vencimiento ni se aprueba la acreditación. Un archivo pendiente de análisis, ilegible, parcial o con indicios de vencimiento que no se pudieron interpretar no se declara sin vencimiento. Alcohol y drogas conserva emisión + 30 días; sin emisión clara requiere revisión.
+
+Con vencimiento verificado, el semáforo es verde fuera del período de aviso, amarillo durante los últimos 30 días (7 para alcohol y drogas) y rojo desde el día siguiente al vencimiento. La lectura OCR de fechas sigue requiriendo comprobación; las tablas con fechas contradictorias o varias columnas de fechas no se resuelven por adivinación.

@@ -188,7 +188,7 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
         from document_analysis import current_analysis,analysis_payload
         automatic=analysis_payload(current_analysis(db,user,doc.id,version),doc,version)
         today=datetime.now(ZoneInfo('America/Santiago')).date()
-        expiry_status='no_date' if doc.expires_on is None else 'expired' if doc.expires_on<today else 'expiring' if doc.expires_on<=today+timedelta(days=automatic.get('warning_days',30)) else 'valid'
+        expiry_status=('valid' if automatic.get('no_expiry') and file else 'no_date') if doc.expires_on is None else 'expired' if doc.expires_on<today else 'expiring' if doc.expires_on<=today+timedelta(days=automatic.get('warning_days',30)) else 'valid'
         result.append({'analysis':automatic,'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id,'worker_id':link.worker_id,'project_id':doc.project_id, 'expires_on': doc.expires_on, 'expiry_status': expiry_status, 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
     core.add_audit(db, user, 'document.private_list', 'tenant', user.tenant_id)
     db.commit()

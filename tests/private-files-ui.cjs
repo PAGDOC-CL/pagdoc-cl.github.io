@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const {JSDOM,VirtualConsole}=require('jsdom');
 const root=path.resolve(__dirname,'..'),errors=[],calls=[],downloads=[];
 const docs=[],workers=[],vehicles=[{id:1,label:'Fictitious truck',plate:'TEST11'}];
-let onboardingSeen=false,allIdentical=false;
+let onboardingSeen=false,allIdentical=false,summaryError=false;let summaryFixture={total:10,counts:{valid:6,expired:1,expiring:2,pending:1}};
 let signedIn=false,rejectUpload=false,logoVersion=0,rejectName='';const previewHashes=new Map();
 const me={id:1,email:'admin@example.invalid',role:'admin',capabilities:['plan.read','plan.write','documents.read','documents.write','documents.review','tasks.read','tasks.write','users.manage']};
 let emailPref={enabled:false,days_before:30,include_expiring:true,include_expired:true,include_overdue:true};
@@ -26,6 +26,7 @@ const dom=new JSDOM(fs.readFileSync(path.join(root,'operacion.html'),'utf8').rep
    else if(url.pathname==='/ops/branding/logo'){assert(options.body instanceof w.File);assert.equal(options.headers['Content-Type'],'image/png');assert.equal(options.headers['X-PAGDOC-CSRF'],'fictitious-csrf');body={logo_version:++logoVersion};}
    else if(url.pathname==='/workers'&&options.method==='POST'){const worker={id:workers.length+1,...payload};workers.push(worker);body=worker;}
    else if(url.pathname==='/ops/bootstrap')body={me,tenant:{id:1,name:'Fictitious Company'},workers,projects:[{id:1,name:"Fictitious Project"}],users:[]};
+   else if(url.pathname==='/ops/files/summary'){status=summaryError?503:200;body=summaryError?{detail:'Fictitious unavailable summary'}:summaryFixture;}
    else if(url.pathname==='/ops/dashboard')body={active_services:0,pending_tasks:0,overdue_tasks:0,tomorrow_assignments:0,tomorrow_blocked:0};
    else if(url.pathname==='/ops/integrations')body={storage:{binary_http_enabled:true}};
    else if(url.pathname==='/ops/files/analysis/status')body={total:docs.length,counts:{pending:0,processing:0,ready:docs.length,review:0,confirmed:0},alcohol_drugs_days:30};
@@ -83,7 +84,7 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  w.eval(fs.readFileSync(path.join(root,'assets/operations.js'),'utf8'));await settle();
  $('login-email').value=me.email;$('login-password').value='fictitious-password';$('login-form').dispatchEvent(new w.Event('submit',{cancelable:true,bubbles:true}));await settle();
  assert($('editor').open);assert($('dialog-title').textContent.includes('Tutorial'));assert($('dialog-detail').textContent.includes('Bienvenido'));
- assert(!d.querySelector('[data-action="tutorial"]'));assert($('tutorial-video').controls);assert(!$('tutorial-video').autoplay);assert($('tutorial-video').querySelector('source').src.endsWith('tutorial-overview.mp4'));assert($('dialog-detail').textContent.includes('Leer los pasos del video'));
+ assert(d.querySelector('.document-overview').textContent.includes('Total documentos vigentes'));assert(d.querySelector('.document-overview').textContent.includes('60%'));assert(d.querySelector('.document-donut').getAttribute('aria-label').includes('Por vencer: 2 (20%)'));assert(!d.querySelector('[data-action="tutorial"]'));assert($('tutorial-video').controls);assert(!$('tutorial-video').autoplay);assert($('tutorial-video').querySelector('source').src.endsWith('tutorial-overview.mp4'));assert($('dialog-detail').textContent.includes('Leer los pasos del video'));
  const firstTutorialVideo=$('tutorial-video');await firstTutorialVideo.play();await click('[data-action="guide-next"]');assert(firstTutorialVideo.paused,'Changing tutorial step pauses the previous video');assert($('dialog-detail').textContent.includes('Proyectos y servicios'));assert.equal($('breadcrumb').textContent,'Proyectos y servicios');
  await click('[data-action="guide-next"]');assert($('dialog-detail').textContent.includes('Planificador de personal'));assert.equal($('breadcrumb').textContent,'Planificador de personal');assert($('tutorial-video').querySelector('source').src.endsWith('tutorial-planning-write.mp4'));
  await click('[data-action="guide-next"]');assert.equal($('breadcrumb').textContent,'Empresa');
@@ -147,6 +148,7 @@ async function submit(){$('edit-form').dispatchEvent(new w.Event('submit',{cance
  await click('[data-view="security"]');assert($('view').textContent.includes('Alertas por correo'));await click('[data-action="email-preferences"]');set('enabled','1');set('days_before','7');await submit();assert(emailPref.enabled);assert.equal(emailPref.days_before,7);assert($('view').textContent.includes('Activadas en tu perfil'));await click('[data-action="email-preview"]');assert($('dialog-detail').textContent.includes('Tareas atrasadas: 3'));assert($('dialog-detail').textContent.includes('no envía correos'));$('close-dialog').click();await click('[data-action="file-logo"]');const logoField=$('edit-form').elements.upload_file;
  Object.defineProperty(logoField,'files',{value:[new w.File(['fictitious PNG'],'fictitious.png',{type:'image/png'})],configurable:true});await submit();
  assert.equal(logoVersion,1);assert.equal($('company-logo').getAttribute('src'),'/ops/branding/logo?v=1');assert(!$('editor').open);
+ summaryFixture={total:0,counts:{valid:0,expired:0,expiring:0,pending:0}};await click('[data-view="overview"]');assert(d.querySelector('.document-overview').textContent.includes('El gráfico aparecerá al cargar documentos.'));assert(!d.querySelector('.document-overview').textContent.includes('NaN'));summaryError=true;await click('[data-view="overview"]');assert(d.querySelector('.document-overview')===null);assert($('view').textContent.includes('No se pudo consultar el resumen'));
  $('logout').click();await settle();assert(!d.querySelector('#shell .brand').classList.contains('company-brand'));assert(!d.querySelector('#company-logo'));
  assert(calls.every(call=>call.options.credentials==='same-origin'));assert.deepEqual(errors,[]);
  console.log('Private files UI: files, accumulated folders, nested paths, per-folder vehicle binding, 51-file upload, rejection handling and private branding: OK');

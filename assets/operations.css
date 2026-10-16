@@ -33,3 +33,5 @@
 
 /* Keep every module reachable on shorter screens. */
 .sidebar{overflow-y:auto;overscroll-behavior:contain}.sidebar>*{flex-shrink:0}
+
+.document-overview .stat.document-valid{border-top-color:#18845c}.document-chart-layout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:center;gap:32px}.document-donut{width:210px;height:210px;border-radius:50%;display:grid;place-items:center}.document-donut>div{width:148px;height:148px;background:#fff;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center}.document-donut strong{font-size:34px}.document-donut span{font-size:12px;color:var(--muted)}.document-chart-legend{list-style:none;margin:0;padding:0}.document-chart-legend li{display:grid;grid-template-columns:12px minmax(0,1fr) auto 60px;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}.document-chart-legend li>span:last-child{text-align:right}.document-chart-dot{width:11px;height:11px;border-radius:50%}@media(max-width:650px){.document-chart-layout{grid-template-columns:1fr;gap:20px}.document-donut{justify-self:center}.document-chart-legend li{gap:8px;font-size:12px}}

@@ -494,3 +494,8 @@ Con vencimiento verificado, el semáforo es verde fuera del período de aviso, a
 Reconoce vigencias escritas como «la vigencia de este certificado es hasta el día» y «fecha de vigencia». Una fecha de entrega de EPP no se transforma en vencimiento. Alcohol y drogas conserva 30 días desde emisión explícita. Los exámenes ocupacionales conservan su vencimiento explícito.
 
 OCR ya no exige confirmación en todos los casos: requiere puntuación mínima de 60 por palabra, promedio de 85 y mínimo de 90 en todos los elementos numéricos; también exige identidad coincidente y ausencia de contradicciones o lectura parcial. Estas puntuaciones no garantizan exactitud. La lectura de baja confianza queda para revisión, también cuando no detecta vencimiento. Los documentos leídos completamente sin vencimiento quedan vigentes sin inventar una fecha. Las fechas confirmadas manualmente se conservan; las demás versiones actuales se reprocesan sin recarga.
+
+
+### Resumen documental en Mi operación
+
+Usuarios con permiso de lectura documental ven total de documentos cargados, vigentes, vencidos y por vencer, con gráfico de porcentajes y pendientes de análisis/revisión. El servidor cuenta una vez cada documento privado, solo su última versión, de empresa, trabajadores, vehículos y proyectos; excluye metadatos sin archivo. Los estados comparten el cálculo de las listas documentales y la fecha de Chile. Los documentos sin vencimiento solo cuentan como vigentes cuando su análisis lo confirma; alcohol y drogas usa aviso de 7 días y los demás de 30. Los pendientes forman parte del denominador del gráfico. Actualizar o volver a Mi operación consulta nuevamente el servidor. El resumen no concede acreditación y está limitado a la empresa y los permisos de la sesión.

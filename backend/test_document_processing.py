@@ -350,3 +350,36 @@ def test_ocr_confidence_gate_uses_numeric_words_and_overall_quality(tmp_path,mon
     notes=[]
     assert tools.ocr_text(tmp_path/'source.png',tmp_path,notes)=='Certificado ficticio'
     assert ('OCR con confianza alta.' in notes) is expected
+
+
+
+def test_document_summary_counts_current_files_all_modules_and_drug_window(files):
+    c,_,_=files
+    today=analysis.datetime.now(analysis.ZoneInfo('America/Santiago')).date()
+    entries=[
+        ({'subject_kind':'company'},None,'no_expiry','certificado'),
+        ({'subject_kind':'vehicle','vehicle_id':1},today-timedelta(days=1),'ready','revision_tecnica'),
+        ({'subject_kind':'worker','worker_id':1},today+timedelta(days=30),'ready','examen_ocupacional'),
+        ({'subject_kind':'project','project_id':1},None,None,None),
+        ({'subject_kind':'worker','worker_id':1},today+timedelta(days=8),'ready','alcohol_drogas'),
+    ]
+    for i,(subject,expiry,status,kind) in enumerate(entries):
+        identity=create(c,title='Fictitious summary '+str(i),expires_on=expiry.isoformat() if expiry else None,**subject)
+        assert upload(c,identity).status_code==201
+        if i==0:assert upload(c,identity,version=1,payload=b'%PDF-1.7\n% fictitious latest version\n%%EOF').status_code==201
+        if status:
+            with core.SessionLocal() as db:
+                version=db.scalar(select(analysis.DocumentFileVersion).where(analysis.DocumentFileVersion.document_id==identity).order_by(analysis.DocumentFileVersion.version.desc()))
+                db.add(analysis.FileAnalysis(document_id=identity,tenant_id=1,file_version_id=version.id,status=status,result_json=json.dumps({'document_type':kind})));db.commit()
+    create(c,title='Metadata without uploaded file',expires_on=(today+timedelta(days=365)).isoformat())
+    result=c.get('/ops/files/summary').json()
+    assert result['total']==5 and result['counts']=={'valid':2,'expired':1,'expiring':1,'pending':1}
+    listed=c.get('/ops/files/documents').json()['items']
+    for state,key in [('valid','valid'),('expired','expired'),('expiring','expiring'),('no_date','pending')]:
+        assert sum(item['expiry_status']==state for item in listed if item['version'])==result['counts'][key]
+    login(c,2)
+    assert c.get('/ops/files/summary').json()['total']==0
+    login(c,3)
+    assert c.get('/ops/files/summary').status_code==403
+    c.post('/auth/logout')
+    assert c.get('/ops/files/summary').status_code==401

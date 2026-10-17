@@ -39,13 +39,13 @@ def parse_date(value):
 
 def interpret(text,notes=None,method='pdf_text',today=None,file_name=None):
     today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text));body=re.sub(r'(?<=\d) *([-/.]) *(?=\d)',r'\1',body)
-    patterns=[('afiliacion',r'certificado\s+(?:de\s+)?afiliacion'),('epp',r'entrega\s+(?:de\s+)?(?:elementos\s+de\s+proteccion\s+personal|epp)\b'),('soap',r'\bsoap\b|seguro\s+obligatorio(?:\s+de)?\s+accidentes\s+personales'),('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica|evaluacion(?:es)?\s+(?:pre)?ocupacional'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato\s+(?:de\s+)?trabajo|anexo\s+(?:de\s+contrato|laboral|de\s+trabajo)'),('cotizaciones',r'cotizaciones previsionales|previred|certificado\s+(?:de\s+)?cotizaciones?')]
+    patterns=[('afiliacion',r'certificado\s+(?:de\s+)?afiliacion'),('epp',r'entrega\s+(?:de\s+)?(?:elementos\s+de\s+proteccion\s+personal|epp)\b'),('soap',r'\bsoap\b|seguro\s+obligatorio(?:\s+de)?\s+accidentes\s+personales'),('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica|evaluacion(?:es)?\s+(?:pre)?ocupacional'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato\s+(?:de\s+)?trabajo|anexo\s+(?:de\s+contrato|laboral|de\s+trabajo)'),('cotizaciones',r'cotizaciones previsionales|previred|certificado\s+(?:de\s+)?cotizacion(?:es)?')]
     matches=[kind for kind,pattern in patterns if re.search(pattern,body)]
     filename=normalize(file_name or '').replace('_',' ')
     hint=None
     if re.search(r'^(?:contrato|anexo)\b',filename):hint='contrato'
-    elif re.search(r'^(?:certificado[ _-]+)?afiliacion\b',filename):hint='afiliacion'
-    elif re.search(r'^(?:certificado[ _-]+)?cotizaciones?\b|^previred\b',filename):hint='cotizaciones'
+    elif re.search(r'^(?:certificado\s+(?:de\s+)?)?afiliacion\b',filename):hint='afiliacion'
+    elif re.search(r'^(?:certificado\s+(?:de\s+)?)?cotizacion(?:es)?\b|^previred\b',filename):hint='cotizaciones'
     elif re.search(r'whatsapp|(?:^|[ _-])wsp(?:[ _.-]|$)|^img-\d{8}-wa\d+',filename) and re.search(r'\.(?:png|jpe?g)$',filename):hint='whatsapp'
     if hint and (not matches or set(matches)<=POLICY_VALID_TYPES) and hint not in matches:matches.append(hint)
     kind=matches[0] if matches and set(matches)<=POLICY_VALID_TYPES else matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'

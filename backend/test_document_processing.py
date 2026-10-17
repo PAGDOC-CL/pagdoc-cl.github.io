@@ -620,3 +620,14 @@ def test_internal_policy_also_covers_human_confirmed_contracts_without_changing_
     result=c.get(f'/ops/files/documents/{identity}/analysis').json()
     assert result['status']=='policy_valid' and result['validity_exempt']
     assert result['expires_on']=='2020-01-01' and result['traffic_light']=='valid'
+
+
+
+@pytest.mark.parametrize('name,kind',[
+    ('Certificado de Afiliación.pdf','afiliacion'),
+    ('Certificado de Cotización.pdf','cotizaciones'),
+    ('Certificado_Cotizaciones.pdf','cotizaciones'),
+])
+def test_certificate_filename_policy_handles_de_and_singular(name,kind):
+    result=analysis.interpret('',file_name=name)
+    assert result['document_type']==kind and result['validity_exempt']

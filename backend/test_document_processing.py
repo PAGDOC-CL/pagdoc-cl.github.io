@@ -425,7 +425,7 @@ def test_deep_ocr_partial_failure_never_automatically_applies(tmp_path,monkeypat
 def test_hybrid_pdf_reads_raster_dates_with_long_digital_text(monkeypatch):
     import document_tools as tools
     monkeypatch.setattr(tools,'pdf_pages',lambda *_:1)
-    monkeypatch.setattr(tools,'pdf_image_pages',lambda *_:{1})
+    monkeypatch.setattr(tools,'pdf_image_pages',lambda *_,**kw:({1},set()))
     def fake_command(args,directory,timeout=35):
         Path(args[-1]).write_text('Certificado ficticio. Nombre y texto digital sin fecha.'*3)
     monkeypatch.setattr(tools,'command',fake_command)
@@ -472,3 +472,80 @@ def test_rules_six_reprocesses_automatic_analysis_and_reports_causes(files):
 ])
 def test_exact_worker_identifier_handles_name_order_without_fuzzy_matching(name,text,identifier,expected):
     assert analysis.identity_confirmed(name,text,identifier) is expected
+
+
+@pytest.mark.parametrize('text,expected,safe',[
+    ('SOAP RIGE DESDE: 01-03-2026 HASTA: 31-03-2027','2027-03-31',True),
+    ('Seguro Obligatorio de Accidentes Personales. RIGE DESDE: 01-03-2026 HASTA: 31-03-2027\nRIGE DESDE: 01-03-2026 HASTA: 31-03-2027','2027-03-31',True),
+    ('SOAP RIGE DESDE: 01-03-2026 HASTA: 31-03-2027\nRIGE DESDE: 01-03-2026 HASTA: 31-08-2027',None,False),
+    ('SOAP RIGE DESDE: 01-03-2026 HASTA: 31-02-2027',None,False),
+    ('SOAP RIGE DESDE: 01-03-2027 HASTA: 01-03-2026',None,False),
+    ('SOAP sin fechas',None,False),
+])
+def test_soap_coverage_range_is_explicit_not_issue_date(text,expected,safe):
+    result=analysis.interpret(text,today=date(2026,10,17))
+    assert result['document_type']=='soap' and result['expires_on']==expected
+    assert result['safe_to_apply'] is safe and not result['no_expiry']
+    assert result['issued_on'] is None
+    if safe:assert result['valid_from']=='2026-03-01'
+
+
+def test_generic_hasta_or_rige_desde_is_not_soap_expiration():
+    result=analysis.interpret('Contrato. Rige desde: 01-03-2026 hasta: 31-03-2027')
+    assert result['expires_on'] is None
+
+
+@pytest.mark.parametrize('full_scan',[False,True])
+def test_small_graphics_do_not_override_clear_digital_dates_but_full_scans_are_checked(monkeypatch,full_scan):
+    import document_tools as tools
+    monkeypatch.setattr(tools,'pdf_pages',lambda *_:1)
+    monkeypatch.setattr(tools,'pdf_image_pages',lambda *_,**kw:({1},{1} if full_scan else set()))
+    def fake_command(args,directory,timeout=35):
+        Path(args[-1]).write_text('Seguro Obligatorio de Accidentes Personales. RIGE DESDE: 01-03-2026 HASTA: 31-03-2027')
+    monkeypatch.setattr(tools,'command',fake_command)
+    monkeypatch.setattr(tools,'raster_pdf',lambda *_,**kw:b'synthetic raster')
+    calls=[]
+    def fake_ocr(path,directory,notes):
+        calls.append(True);notes.append('OCR con confianza insuficiente: revisar lectura.')
+        return 'SOAP Vence 31-03-2028'
+    monkeypatch.setattr(tools,'ocr_deep',fake_ocr)
+    text,notes,method=tools.extract(b'%PDF-fictitious','application/pdf')
+    assert bool(calls) is full_scan
+    result=analysis.interpret(text,notes,method,today=date(2026,10,17))
+    assert result['safe_to_apply'] is (not full_scan)
+    if not full_scan:assert method=='pdf_text' and result['expires_on']=='2027-03-31'
+
+
+
+def test_image_inventory_distinguishes_signature_from_full_page_scan(tmp_path,monkeypatch):
+    import document_tools as tools
+    (tmp_path/'info.txt').write_text('Page size: 612 x 792 pts (letter)')
+    def fake_run(args,**kwargs):
+        kwargs['stdout'].write(b'page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n1 0 image 615 223 rgb 3 8 jpeg no 1 0 72 72 123B 1%\n2 1 image 2550 3300 rgb 3 8 jpeg no 2 0 300 300 123B 1%\n')
+    monkeypatch.setattr(tools.subprocess,'run',fake_run)
+    assert tools.pdf_image_pages(tmp_path/'synthetic.pdf',tmp_path,with_scans=True)==({1,2},{2})
+
+
+
+def test_soap_explicit_expiry_does_not_require_a_coverage_range():
+    result=analysis.interpret('SOAP. Fecha de vencimiento: 31/03/2027')
+    assert result['safe_to_apply'] and result['expires_on']=='2027-03-31'
+    assert result['valid_from'] is None and result['issued_on'] is None
+
+
+def test_mixed_soap_classification_without_dates_is_not_no_expiry():
+    result=analysis.interpret('SOAP y procedimiento. Sin fechas legibles')
+    assert not result['no_expiry'] and not result['safe_to_apply']
+
+
+
+def test_soap_coverage_is_saved_and_returned_separately_from_emission(files):
+    c,_,_=files;identity=create(c,subject_kind='vehicle',vehicle_id=1)
+    payload=word_document('Seguro Obligatorio de Accidentes Personales. TEST11. RIGE DESDE: 01-03-2026 HASTA: 31-03-2027')
+    assert upload(c,identity,payload=payload,filename='synthetic-soap.docx',media='application/vnd.openxmlformats-officedocument.wordprocessingml.document').status_code==201
+    with core.SessionLocal() as db:assert analysis.process_next(db)
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='ready' and result['document_type']=='soap'
+    assert result['valid_from']=='2026-03-01' and result['issued_on'] is None
+    assert result['expires_on']=='2027-03-31'
+    assert c.get('/ops/files/documents',params={'document_type':'soap'}).json()['total']==1

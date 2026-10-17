@@ -135,20 +135,28 @@ def office_text(data,media):
     return result[:MAX_TEXT],notes
 
 
-def pdf_image_pages(path,directory):
+def pdf_image_pages(path,directory,with_scans=False):
     target=Path(directory)/'images.txt'
     limiter=shutil.which('prlimit')
     if not limiter:raise ExtractionError('El motor privado no está instalado.')
     with target.open('wb') as output:
         try:subprocess.run([limiter,'--as=536870912','--cpu=15','--fsize=1048576','--','pdfimages','-list',str(path)],stdout=output,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,timeout=20,check=True,env={'PATH':'/usr/local/bin:/usr/bin:/bin','LC_ALL':'C','HOME':str(directory),'TMPDIR':str(directory)})
         except (OSError,subprocess.SubprocessError) as exc:raise ExtractionError('No se pudo comprobar las imágenes del PDF.') from exc
-    pages=set()
+    pages=set();scans=set()
+    info=Path(directory)/'info.txt'
+    size=re.search(r'Page size:\s+([0-9.]+) x ([0-9.]+)',bounded_text(info)) if info.exists() else None
+    area=float(size[1])*float(size[2]) if size else None
     for line in bounded_text(target).splitlines():
         cells=line.split()
         if len(cells)>4 and cells[0].isdigit() and cells[3].isdigit() and cells[4].isdigit():
             width,height=int(cells[3]),int(cells[4])
             if max(width,height)>=500 and min(width,height)>=150:pages.add(int(cells[0]))
-    return pages
+            if len(cells)>13 and area:
+                try:
+                    xppi,yppi=float(cells[12]),float(cells[13])
+                    if xppi>0 and yppi>0 and width*height*72*72/(xppi*yppi)>=area*0.6:scans.add(int(cells[0]))
+                except ValueError:pass
+    return (pages,scans) if with_scans else pages
 
 
 def ocr_deep(path,directory,notes):
@@ -180,14 +188,17 @@ def extract(data,media):
         if media=='application/pdf':
             count=pdf_pages(path,directory)
             if count>MAX_PAGES:notes.append(f'Lectura parcial: PDF supera {MAX_PAGES} páginas.')
-            image_pages=pdf_image_pages(path,directory)
+            image_pages,scan_pages=pdf_image_pages(path,directory,with_scans=True)
             started=time.monotonic()
             for page in range(1,min(count,MAX_PAGES)+1):
                 if time.monotonic()-started>120:notes.append('Lectura parcial: tiempo máximo alcanzado.');break
                 target=Path(directory)/'text.txt'
                 command(['pdftotext','-f',page,'-l',page,'-layout',path,target],directory)
                 text=bounded_text(target)
-                if len(re.sub(r'\s','',text))<30 or page in image_pages:
+                from document_analysis import interpret
+                digital=interpret(text)
+                needs_ocr=len(re.sub(r'\s','',text))<30 or page in scan_pages or (page in image_pages and not digital['safe_to_apply'])
+                if needs_ocr:
                     image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));scanned=ocr_deep(image,directory,notes);text=text+'\n'+scanned;ocr=True
                 texts.append(text)
                 if sum(map(len,texts))>MAX_TEXT:notes.append('Lectura parcial: texto demasiado largo.');break

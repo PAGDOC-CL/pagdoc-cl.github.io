@@ -510,3 +510,12 @@ La extracción identifica imágenes de tamaño significativo dentro de PDF aunqu
 El resumen muestra versión de reglas, cola restante y motivos agregados de revisión: OCR, identidad, fechas, emisión de alcohol/drogas, lectura parcial/fallida y otros. Un documento puede presentar varios motivos. Permite comprobar cuándo termina la nueva cola y cuántos casos siguen necesitando revisión. Las cifras reales solo se pueden confirmar en la instancia privada.
 
 Para trabajadores, además del nombre completo, se admite coincidencia exacta del identificador numérico registrado de formato RUT, con separadores opcionales y límites completos. No hay coincidencia difusa de nombres ni se crean identificadores. Esto compara contra la ficha interna; no valida identidad ante organismos externos.
+
+
+### Reglas 7: SOAP y gráficos en PDF digitales
+
+El SOAP se clasifica como seguro obligatorio y reconoce el rango explícito «RIGE DESDE: fecha HASTA: fecha» (también vigente/vigencia desde). Inicio de cobertura y emisión son campos distintos: el rango no inventa una fecha de emisión. Copias con el mismo rango se deduplican; rangos inválidos, invertidos, futuros o contradictorios requieren revisión. Un SOAP sin rango no se convierte en vigente sin vencimiento.
+
+Una página con fecha digital inequívoca no se degrada por OCR de gráficos pequeños, firmas o logotipos. Las imágenes que ocupan al menos 60% del área física de la página, según su resolución, siguen requiriendo OCR para comprobar capas de texto de escaneos. Páginas sin fecha digital segura mantienen OCR de regiones significativas. No se modifica ningún archivo original. Reglas anteriores se reprocesan con la nueva versión, preservando confirmaciones humanas.
+
+La corrección se validó además de los casos sintéticos con un PDF privado aportado por el usuario, sin incluir su archivo, su texto ni sus identificadores en este repositorio público. Esto no demuestra que todos los documentos pendientes compartan la misma causa.

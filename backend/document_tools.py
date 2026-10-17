@@ -197,7 +197,7 @@ def extract(data,media):
                 text=bounded_text(target)
                 from document_analysis import interpret
                 digital=interpret(text)
-                needs_ocr=len(re.sub(r'\s','',text))<30 or page in scan_pages or (page in image_pages and not digital['safe_to_apply'])
+                needs_ocr=len(re.sub(r'\s','',text))<30 or page in scan_pages or (page in image_pages and not (digital['safe_to_apply'] or (digital['document_type']=='epp' and digital['no_expiry'])))
                 if needs_ocr:
                     image=Path(directory)/'ocr.png';image.write_bytes(raster_pdf(path,page,directory,scale=3000));scanned=ocr_deep(image,directory,notes);text=text+'\n'+scanned;ocr=True
                 texts.append(text)

@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 ANALYSIS_RULES_VERSION=7
 DRUG_VALIDITY_DAYS=30
 
-TYPES={'soap':'Seguro obligatorio SOAP','alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
+POLICY_VALID_TYPES={'contrato','cotizaciones','afiliacion','whatsapp'}
+TYPES={'afiliacion':'Certificado de afiliación','whatsapp':'Imagen de WhatsApp','epp':'Entrega de EPP','soap':'Seguro obligatorio SOAP','alcohol_drogas':'Examen de alcohol y drogas','examen_ocupacional':'Examen ocupacional','revision_tecnica':'Revisión técnica','permiso_circulacion':'Permiso de circulación','antecedentes':'Certificado de antecedentes','procedimiento':'Procedimiento','checklist':'Lista de verificación','contrato':'Contrato o anexo','cotizaciones':'Cotizaciones previsionales','certificado':'Certificado','sin_clasificar':'Sin clasificar'}
 MONTHS={'enero':1,'febrero':2,'marzo':3,'abril':4,'mayo':5,'junio':6,'julio':7,'agosto':8,'septiembre':9,'setiembre':9,'octubre':10,'noviembre':11,'diciembre':12}
 
 
@@ -36,11 +37,18 @@ def parse_date(value):
     except ValueError:return None
 
 
-def interpret(text,notes=None,method='pdf_text',today=None):
+def interpret(text,notes=None,method='pdf_text',today=None,file_name=None):
     today=today or datetime.now(ZoneInfo('America/Santiago')).date();warnings=list(notes or []);body=re.sub(r'[^\S\n]+',' ',normalize(text));body=re.sub(r'(?<=\d) *([-/.]) *(?=\d)',r'\1',body)
-    patterns=[('soap',r'\bsoap\b|seguro\s+obligatorio(?:\s+de)?\s+accidentes\s+personales'),('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica|evaluacion(?:es)?\s+(?:pre)?ocupacional'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato de trabajo|anexo de contrato'),('cotizaciones',r'cotizaciones previsionales|previred')]
+    patterns=[('afiliacion',r'certificado\s+(?:de\s+)?afiliacion'),('epp',r'entrega\s+(?:de\s+)?(?:elementos\s+de\s+proteccion\s+personal|epp)\b'),('soap',r'\bsoap\b|seguro\s+obligatorio(?:\s+de)?\s+accidentes\s+personales'),('alcohol_drogas',r'alcohol\s*(?:y|e|/)?\s*drogas|(?:test|examen(?:es)?|screening|panel|analisis)(?:\s+de)?\s+(?:alcohol|drogas)|drogas\s+(?:de\s+)?abuso'),('examen_ocupacional',r'examen(?:es)?\s+(?:pre)?ocupacional|bateria basica|evaluacion(?:es)?\s+(?:pre)?ocupacional'),('revision_tecnica',r'revision tecnica'),('permiso_circulacion',r'permiso de circulacion'),('antecedentes',r'certificado de antecedentes'),('procedimiento',r'procedimiento'),('checklist',r'check\s*list|lista de verificacion'),('contrato',r'contrato\s+(?:de\s+)?trabajo|anexo\s+(?:de\s+contrato|laboral|de\s+trabajo)'),('cotizaciones',r'cotizaciones previsionales|previred|certificado\s+(?:de\s+)?cotizaciones?')]
     matches=[kind for kind,pattern in patterns if re.search(pattern,body)]
-    kind=matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'
+    filename=normalize(file_name or '').replace('_',' ')
+    hint=None
+    if re.search(r'^(?:contrato|anexo)\b',filename):hint='contrato'
+    elif re.search(r'^(?:certificado[ _-]+)?afiliacion\b',filename):hint='afiliacion'
+    elif re.search(r'^(?:certificado[ _-]+)?cotizaciones?\b|^previred\b',filename):hint='cotizaciones'
+    elif re.search(r'whatsapp|(?:^|[ _-])wsp(?:[ _.-]|$)|^img-\d{8}-wa\d+',filename) and re.search(r'\.(?:png|jpe?g)$',filename):hint='whatsapp'
+    if hint and (not matches or set(matches)<=POLICY_VALID_TYPES) and hint not in matches:matches.append(hint)
+    kind=matches[0] if matches and set(matches)<=POLICY_VALID_TYPES else matches[0] if len(matches)==1 else 'certificado' if not matches and re.search(r'\bcertificado\b',body) else 'sin_clasificar'
     if len(matches)>1:warnings.append('Se detectaron varios tipos documentales; revisar clasificación.')
     if kind=='sin_clasificar':warnings.append('No se identificó un tipo documental único.')
     token=r'(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+(?:de\s+)?(?:'+ '|'.join(MONTHS)+r')\s+(?:de\s+)?\d{4})'
@@ -104,7 +112,7 @@ def interpret(text,notes=None,method='pdf_text',today=None):
     no_expiry=bool(text.strip()) and 'alcohol_drogas' not in matches and 'soap' not in matches and not expiry and not re.search(expiry_labels,expiry_context) and not any(note!='OCR con confianza alta.' for note in (notes or []))
     classification_notes={'Se detectaron varios tipos documentales; revisar clasificación.','No se identificó un tipo documental único.'}
     blocking=[warning for warning in warnings if warning!='OCR con confianza alta.' and (warning not in classification_notes or 'alcohol_drogas' in matches)]
-    return {'no_expiry':no_expiry and kind!='soap','rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'valid_from':valid_from.isoformat() if valid_from else None,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not blocking}
+    return {'validity_exempt':kind in POLICY_VALID_TYPES and bool(matches) and set(matches)<=POLICY_VALID_TYPES,'no_expiry':no_expiry and kind!='soap','rules_version':ANALYSIS_RULES_VERSION,'expiry_rule':rule,'validity_days':DRUG_VALIDITY_DAYS if rule else None,'document_expires_on':printed_expiry.isoformat() if printed_expiry else None,'document_type':kind,'valid_from':valid_from.isoformat() if valid_from else None,'issued_on':issue.isoformat() if issue else None,'expires_on':expiry.isoformat() if expiry else None,'method':method,'warnings':list(dict.fromkeys(warnings)),'safe_to_apply':bool(expiry) and not blocking}
 
 
 class FileAnalysis(core.Base):
@@ -131,8 +139,8 @@ def analysis_payload(row,doc,version):
         if datetime.now(timezone.utc)-claimed>timedelta(minutes=10):status='interrupted'
     today=datetime.now(ZoneInfo('America/Santiago')).date()
     warning_days=7 if result.get('document_type')=='alcohol_drogas' else 30
-    traffic='expired' if doc.expires_on and doc.expires_on<today else 'valid' if status in {'ready','confirmed'} and doc.expires_on and doc.expires_on>today+timedelta(days=warning_days) else 'expiring' if status in {'ready','confirmed'} and doc.expires_on else 'valid' if status=='no_expiry' and version>0 else 'warning'
-    return {'no_expiry':status=='no_expiry','expiry_rule':result.get('expiry_rule'),'validity_days':result.get('validity_days'),'document_expires_on':result.get('document_expires_on'),'warning_days':warning_days,'status':status,'version':version,'traffic_light':traffic,'document_type':result.get('document_type','sin_clasificar'),'type_label':TYPES.get(result.get('document_type'),'Sin clasificar'),'valid_from':result.get('valid_from'),'issued_on':result.get('issued_on'),'proposed_expires_on':result.get('expires_on'),'revision':result.get('revision',0),'method':result.get('method'),'warnings':result.get('warnings',[]),'expires_on':doc.expires_on}
+    traffic='valid' if status=='policy_valid' and version>0 else 'expired' if doc.expires_on and doc.expires_on<today else 'valid' if status in {'ready','confirmed'} and doc.expires_on and doc.expires_on>today+timedelta(days=warning_days) else 'expiring' if status in {'ready','confirmed'} and doc.expires_on else 'valid' if status=='no_expiry' and version>0 else 'warning'
+    return {'validity_exempt':status=='policy_valid','no_expiry':status=='no_expiry','expiry_rule':result.get('expiry_rule'),'validity_days':result.get('validity_days'),'document_expires_on':result.get('document_expires_on'),'warning_days':warning_days,'status':status,'version':version,'traffic_light':traffic,'document_type':result.get('document_type','sin_clasificar'),'type_label':TYPES.get(result.get('document_type'),'Sin clasificar'),'valid_from':result.get('valid_from'),'issued_on':result.get('issued_on'),'proposed_expires_on':result.get('expires_on'),'revision':result.get('revision',0),'method':result.get('method'),'warnings':result.get('warnings',[]),'expires_on':doc.expires_on}
 
 
 @core.app.get('/ops/files/documents/{document_id}/analysis')
@@ -188,16 +196,34 @@ def identity_confirmed(name,text,identifier=None):
     return False
 
 
+def worker_identity_confirmed(db,worker,text):
+    if identity_confirmed(worker.full_name,text,worker.identifier):return True
+    if worker.identifier:return False
+    stop={'de','del','la','las','los','y'}
+    def tokens(value):return [part for part in re.findall(r'[a-z]+',normalize(value)) if part not in stop]
+    def matches(name,line):
+        wanted=tokens(name);available=tokens(re.split(r'\b(?:rut|run)\b',normalize(line))[0])
+        if len(wanted)<2 or any(len(part)<3 for part in wanted) or len(available)>10:return False
+        iterator=iter(available)
+        return all(any(part==target for part in iterator) for target in wanted)
+    lines=[line for line in text.splitlines() if re.search(r'\b(?:rut|run)\b',normalize(line)) and matches(worker.full_name,line)]
+    if not lines:return False
+    others=db.scalars(select(core.Worker).where(core.Worker.tenant_id==worker.tenant_id,core.Worker.id!=worker.id)).all()
+    return any(not any(matches(other.full_name,line) for other in others) for line in lines)
+
+
 def process_next(db,extractor=extract):
     if not enabled():return False
     latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).group_by(DocumentFileVersion.document_id).subquery()
-    query=select(DocumentFileVersion).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(or_(FileAnalysis.id.is_(None),FileAnalysis.rules_version<ANALYSIS_RULES_VERSION)).order_by(DocumentFileVersion.id).limit(1).with_for_update(skip_locked=True,of=DocumentFileVersion)
+    query=select(DocumentFileVersion).join(core.Document,core.Document.id==DocumentFileVersion.document_id).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(or_(FileAnalysis.id.is_(None),FileAnalysis.rules_version<ANALYSIS_RULES_VERSION)).order_by(DocumentFileVersion.id).limit(1).with_for_update(skip_locked=True,of=DocumentFileVersion)
     file=db.scalar(query)
     if file is None:return False
     identity=(file.id,file.document_id,file.tenant_id,file.version,file.created_by_user_id)
     row=db.scalar(select(FileAnalysis).where(FileAnalysis.file_version_id==file.id))
     if row and row.status=='confirmed':
         doc=db.scalar(select(core.Document).where(core.Document.id==file.document_id,core.Document.tenant_id==file.tenant_id).with_for_update());user=db.get(core.User,file.created_by_user_id)
+        if doc is None:
+            row.status='superseded';row.rules_version=ANALYSIS_RULES_VERSION;db.commit();return True
         if latest_version(db,file.tenant_id,doc.id)!=file.version:row.status='superseded'
         else:
             result=json.loads(row.result_json)
@@ -222,15 +248,15 @@ def process_next(db,extractor=extract):
         from file_records import read_file_version
         payload=read_file_version(db,user,doc.id,identity[3],gateway())
         text,notes,method=extractor(payload,file.media_type)
-        result=interpret(text,notes,method)
+        result=interpret(text,notes,method,file_name=file.original_name)
         link=db.get(FileSubject,doc.id)
-        identity_name=None;identity_identifier=None
+        identity_name=None;identity_identifier=None;worker=None
         if link.subject_kind=='company':identity_name=db.get(core.Tenant,doc.tenant_id).name
         elif link.subject_kind=='worker':
             worker=db.get(core.Worker,link.worker_id);identity_name=worker.full_name;identity_identifier=worker.identifier
         elif link.subject_kind=='project':identity_name=db.get(core.Project,doc.project_id).name
         if identity_name:
-            if not identity_confirmed(identity_name,text,identity_identifier):
+            if not (worker_identity_confirmed(db,worker,text) if worker else identity_confirmed(identity_name,text,identity_identifier)):
                 result['warnings'].append('El contenido no confirma el nombre completo del destino. Revisa identidad y fechas.')
                 result['safe_to_apply']=False
         elif link.subject_kind=='vehicle':
@@ -240,15 +266,19 @@ def process_next(db,extractor=extract):
                 result['warnings'].append('El contenido no confirma la patente del destino. Revisa identidad y fechas.')
                 result['safe_to_apply']=False
     except Exception:
-        db.rollback();result={'document_type':'sin_clasificar','issued_on':None,'expires_on':None,'method':'unavailable','warnings':['No se completó la lectura. Revisa el archivo original.'],'safe_to_apply':False}
+        db.rollback();result=interpret('', ['No se completó la lectura. Revisa el archivo original.'], 'unavailable',file_name=file.original_name)
     # End extraction's read transaction, then reload fresh metadata under lock.
     db.rollback()
     # Use the same document→tenant audit lock order as ordinary uploads.
     doc=db.scalar(select(core.Document).where(core.Document.id==identity[1],core.Document.tenant_id==identity[2]).with_for_update())
     row=db.get(FileAnalysis,analysis_id)
+    if doc is None or doc.archived_at is not None:
+        row.status='superseded';db.commit();return True
     if row.status=='confirmed':return True
     if latest_version(db,identity[2],doc.id)!=identity[3]:
         row.status='superseded'
+    elif result.get('validity_exempt'):
+        row.status='policy_valid'
     elif result.get('no_expiry') and doc.expires_on is None:
         row.status='no_expiry'
     elif result['safe_to_apply']:
@@ -266,8 +296,8 @@ def process_next(db,extractor=extract):
 @core.app.get('/ops/files/analysis/status')
 def analysis_status(user:FileRead,db:core.Db):
     latest=select(DocumentFileVersion.document_id,func.max(DocumentFileVersion.version).label('v')).where(DocumentFileVersion.tenant_id==user.tenant_id).group_by(DocumentFileVersion.document_id).subquery()
-    rows=db.execute(select(FileAnalysis.status,FileAnalysis.rules_version,FileAnalysis.result_json).select_from(DocumentFileVersion).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
-    counts={key:0 for key in ['pending','processing','review','ready','confirmed','no_expiry','superseded']}
+    rows=db.execute(select(FileAnalysis.status,FileAnalysis.rules_version,FileAnalysis.result_json).select_from(DocumentFileVersion).join(core.Document,core.Document.id==DocumentFileVersion.document_id).join(FileSubject,FileSubject.document_id==DocumentFileVersion.document_id).join(latest,(latest.c.document_id==DocumentFileVersion.document_id)&(latest.c.v==DocumentFileVersion.version)).outerjoin(FileAnalysis,FileAnalysis.file_version_id==DocumentFileVersion.id).where(DocumentFileVersion.tenant_id==user.tenant_id,FileSubject.tenant_id==user.tenant_id)).all()
+    counts={key:0 for key in ['pending','processing','review','ready','confirmed','no_expiry','policy_valid','superseded']}
     reasons={key:0 for key in ['ocr','identity','dates','missing_issue','partial','reading','other']}
     for status,version,result in rows:
         effective='pending' if version is None or version<ANALYSIS_RULES_VERSION else status if status in counts else 'review'

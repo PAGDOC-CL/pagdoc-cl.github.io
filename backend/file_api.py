@@ -155,6 +155,7 @@ def create_document(data: NewFileDocument, user: core.Editor, db: core.Db):
 
 
 def document_expiry_status(doc,automatic,has_file,today):
+    if automatic.get('validity_exempt') and has_file:return 'valid'
     if doc.expires_on is None:
         return 'valid' if automatic.get('no_expiry') and has_file else 'no_date'
     return 'expired' if doc.expires_on<today else 'expiring' if doc.expires_on<=today+timedelta(days=automatic.get('warning_days',30)) else 'valid'
@@ -174,9 +175,52 @@ def document_summary(user:FileRead,db:core.Db):
     return {'total':sum(counts.values()),'counts':counts,'as_of':today,'basis':'latest_uploaded_documents'}
 
 
+class ArchiveDocumentIn(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_version:int=Field(ge=0)
+    reason:str=Field(min_length=5,max_length=300)
+    confirmed:bool=False
+
+
+def change_document_archive(document_id,data,user,db,restore=False):
+    if len(data.reason.strip())<5:raise HTTPException(422,'Escribe un motivo de al menos 5 caracteres.')
+    if not data.confirmed:raise HTTPException(422,'Confirma expresamente el documento y la acción.')
+    doc=db.scalar(select(core.Document).where(core.Document.id==document_id,core.Document.tenant_id==user.tenant_id).execution_options(include_archived=True).with_for_update())
+    link=db.scalar(select(FileSubject).where(FileSubject.document_id==document_id,FileSubject.tenant_id==user.tenant_id))
+    if doc is None or link is None:raise HTTPException(404,'Documento privado no encontrado.')
+    if bool(doc.archived_at)!=restore:raise HTTPException(409,'El estado del documento cambió. Actualiza la lista.')
+    if latest_version(db,user.tenant_id,doc.id)!=data.expected_version:raise HTTPException(409,'La versión cambió. Revisa el archivo antes de confirmar.')
+    from retention_api import DocumentRetentionState
+    hold=db.scalar(select(DocumentRetentionState).where(DocumentRetentionState.document_id==doc.id,DocumentRetentionState.tenant_id==user.tenant_id))
+    if not restore and hold and hold.legal_hold:raise HTTPException(409,'El documento tiene una protección de conservación activa.')
+    bindings=db.scalars(select(FileDestination).where(FileDestination.document_id==doc.id,FileDestination.tenant_id==user.tenant_id)).all()
+    for binding in bindings:
+        key=destination_key(binding.source_path) if restore else hashlib.sha256(('archived:'+str(doc.id)+':'+binding.source_path).encode()).hexdigest()
+        conflict=db.scalar(select(FileDestination.document_id).where(FileDestination.tenant_id==user.tenant_id,FileDestination.subject_scope==binding.subject_scope,FileDestination.path_key==key,FileDestination.document_id!=doc.id))
+        if conflict is not None:raise HTTPException(409,'Otro documento ocupa ese destino. No se sobrescribirá al restaurar.')
+        binding.path_key=key
+    doc.archived_at=None if restore else datetime.now(ZoneInfo('UTC'))
+    doc.archive_reason=None if restore else data.reason.strip()
+    db.add(core.DocumentArchiveEvent(tenant_id=user.tenant_id,document_id=doc.id,user_id=user.id,action='restore' if restore else 'archive',reason=data.reason.strip()))
+    core.add_audit(db,user,'document.restore' if restore else 'document.archive','document',doc.id)
+    db.commit()
+    return {'id':doc.id,'archived':not restore,'originals_preserved':True}
+
+
+@core.app.post('/ops/files/documents/{document_id}/archive')
+def archive_document(document_id:int,data:ArchiveDocumentIn,user:core.Editor,db:core.Db):
+    return change_document_archive(document_id,data,user,db)
+
+
+@core.app.post('/ops/files/documents/{document_id}/restore')
+def restore_document(document_id:int,data:ArchiveDocumentIn,user:core.Editor,db:core.Db):
+    return change_document_archive(document_id,data,user,db,restore=True)
+
+
 @core.app.get('/ops/files/documents')
-def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=1024),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
+def documents(user: FileRead, db: core.Db, archived:bool=False, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=100), subject_kind: Literal['company','vehicle','worker','project'] | None = None,path_prefix:str|None=Query(default=None,max_length=1024),document_type:str|None=Query(default=None,max_length=40),folder_mode:bool=False,vehicle_id:int|None=Query(default=None,gt=0),worker_id:int|None=Query(default=None,gt=0),project_id:int|None=Query(default=None,gt=0)):
     query = select(core.Document, FileSubject).join(FileSubject, FileSubject.document_id == core.Document.id).where(core.Document.tenant_id == user.tenant_id, FileSubject.tenant_id == user.tenant_id)
+    if archived:query=query.execution_options(include_archived=True).where(core.Document.archived_at.is_not(None))
     if subject_kind:
         query = query.where(FileSubject.subject_kind == subject_kind)
     if vehicle_id:query=query.where(FileSubject.vehicle_id==vehicle_id)
@@ -198,8 +242,8 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
         if folder_mode:query=query.where(~func.substr(core.Document.title,len(path_prefix.rstrip('/'))+2).contains('/'))
     elif folder_mode:
         query=query.where(~core.Document.title.contains('/'))
-    total = db.scalar(select(func.count()).select_from(query.subquery()))
-    rows = db.execute(query.order_by(core.Document.id.desc()).offset(offset).limit(limit)).all()
+    total = db.scalar(select(func.count()).select_from(query.subquery()).execution_options(include_archived=archived))
+    rows = db.execute(query.order_by(core.Document.id.desc()).offset(offset).limit(limit).execution_options(include_archived=archived)).all()
     result = []
     for doc, link in rows:
         version = latest_version(db, user.tenant_id, doc.id)
@@ -209,7 +253,7 @@ def documents(user: FileRead, db: core.Db, offset: int = Query(0, ge=0), limit: 
         automatic=analysis_payload(current_analysis(db,user,doc.id,version),doc,version)
         today=datetime.now(ZoneInfo('America/Santiago')).date()
         expiry_status=document_expiry_status(doc,automatic,bool(file),today)
-        result.append({'analysis':automatic,'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id,'worker_id':link.worker_id,'project_id':doc.project_id, 'expires_on': doc.expires_on, 'expiry_status': expiry_status, 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
+        result.append({'archived_at':doc.archived_at,'archive_reason':doc.archive_reason,'analysis':automatic,'id': doc.id, 'title': doc.title, 'subject_kind': link.subject_kind, 'subject_name': doc.subject_name, 'vehicle_id': link.vehicle_id,'worker_id':link.worker_id,'project_id':doc.project_id, 'expires_on': doc.expires_on, 'expiry_status': expiry_status, 'version': version, 'review_state': state, 'file_name': file.original_name if file else None})
     core.add_audit(db, user, 'document.private_list', 'tenant', user.tenant_id)
     db.commit()
     return {'items': result, 'total': total, 'offset': offset, 'limit': limit}

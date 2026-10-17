@@ -12,7 +12,7 @@ import app as core
 from runtime_config import load_runtime_config
 
 
-EXPECTED_SCHEMA_REVISION = "0021_temporary_password"
+EXPECTED_SCHEMA_REVISION = "0022_document_archive"
 
 
 def readiness_ok(db: core.Session, environment: str) -> bool:

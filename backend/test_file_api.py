@@ -461,7 +461,7 @@ def test_path_migration_preserves_existing_destination_and_refuses_truncation(tm
     from sqlalchemy.orm import Session
     with Session(engine) as db:
         db.add(core.Tenant(id=1,name='Fictitious migration'));db.flush()
-        doc=core.Document(tenant_id=1,title='Company/Legacy/a.pdf',subject_type='company',subject_name='Fictitious migration');db.add(doc);db.flush();doc_id=doc.id
+        doc_id=db.execute(text("INSERT INTO documents (tenant_id,title,subject_type,subject_name) VALUES (1,'Company/Legacy/a.pdf','company','Fictitious migration')")).lastrowid
         db.add(file_api.FileSubject(document_id=doc_id,tenant_id=1,subject_kind='company'))
         db.add(file_api.FileDestination(document_id=doc_id,tenant_id=1,subject_scope='company',path_key='company/legacy/a.pdf',source_path='Company/Legacy/a.pdf'));db.commit()
     command.upgrade(config,'head')
@@ -561,3 +561,84 @@ def test_worker_conflict_requires_explicit_scoped_active_choice(files):
     assert c.post('/ops/files/batch/destinations',json={'paths':paths,'worker_choices':{scope:-1}}).status_code==422
     login(c,2)
     assert all(item['status']=='worker_missing' for item in detect(alias_id))
+
+
+
+def test_document_paper_bin_preserves_versions_hides_active_views_and_restores(files):
+    c,store,_=files;identity=create(c);assert upload(c,identity).status_code==201
+    params={'expected_version':1,'reason':'Documento de prueba innecesario','confirmed':True}
+    route=f'/ops/files/documents/{identity}'
+    assert c.post(route+'/archive',json={**params,'confirmed':False}).status_code==422
+    assert c.post(route+'/archive',json={**params,'expected_version':0}).status_code==409
+    assert c.post(route+'/archive',json=params).status_code==200
+    assert c.get('/ops/files/documents').json()['total']==0
+    archived=c.get('/ops/files/documents?archived=true').json()
+    assert archived['total']==1 and archived['items'][0]['archived_at']
+    assert c.get('/ops/files/summary').json()['total']==0
+    assert c.get('/ops/files/analysis/status').json()['total']==0
+    assert c.get('/documents').json()==[] and c.get('/ops/reviews').json()==[]
+    assert c.get('/ops/files/folders').json()['folders']==[]
+    assert c.get(route+'/versions/1/download').status_code==404
+    assert upload(c,identity,version=1).status_code==404
+    from document_analysis import process_next
+    with core.SessionLocal() as db:assert not process_next(db)
+    assert len(list(store.root.rglob('*.bin')))==1
+    assert c.post(route+'/restore',json=params).status_code==200
+    assert c.get('/ops/files/documents').json()['total']==1
+    assert c.get('/ops/files/documents?archived=true').json()['total']==0
+    assert c.get(route+'/versions/1/download').status_code==200
+    with core.SessionLocal() as db:
+        events=db.scalars(select(core.DocumentArchiveEvent).where(core.DocumentArchiveEvent.document_id==identity).order_by(core.DocumentArchiveEvent.id)).all()
+        assert [event.action for event in events]==['archive','restore']
+        assert all(event.reason==params['reason'] and event.user_id==1 for event in events)
+
+
+def test_paper_bin_permissions_csrf_tenant_and_retention_hold(files):
+    c,_,_=files;identity=create(c);assert upload(c,identity).status_code==201
+    route=f'/ops/files/documents/{identity}/archive';params={'expected_version':1,'reason':'Prueba de permisos','confirmed':True}
+    login(c,2);assert c.post(route,json=params).status_code==404
+    login(c,5);assert c.post(route,json=params).status_code==403
+    login(c);del c.headers['X-PAGDOC-CSRF'];assert c.post(route,json=params).status_code==403
+    login(c)
+    from retention_api import DocumentRetentionState
+    with core.SessionLocal() as db:
+        db.add(DocumentRetentionState(tenant_id=1,document_id=identity,legal_hold=1,updated_by_user_id=1));db.commit()
+    assert c.post(route,json=params).status_code==409
+    assert c.get('/ops/files/documents').json()['total']==1
+
+
+
+def test_archive_migration_preserves_existing_documents_and_refuses_loss(tmp_path,monkeypatch):
+    from alembic.config import Config
+    from alembic import command
+    from sqlalchemy import create_engine,text
+    engine=create_engine('sqlite:///'+str(tmp_path/'archive-migration.sqlite3'))
+    monkeypatch.setenv('PAGDOC_DATABASE_URL',str(engine.url))
+    config=Config('alembic.ini');command.upgrade(config,'0021_temporary_password')
+    with engine.begin() as db:
+        db.execute(text("INSERT INTO tenants (id,name) VALUES (1,'Fictitious migration')"))
+        db.execute(text("INSERT INTO documents (id,tenant_id,title,subject_type,subject_name) VALUES (1,1,'Preserved original','company','Fictitious')"))
+    command.upgrade(config,'head')
+    with engine.begin() as db:
+        assert db.execute(text('SELECT title,archived_at FROM documents WHERE id=1')).one()==('Preserved original',None)
+        db.execute(text("UPDATE documents SET archived_at='2026-10-17 00:00:00' WHERE id=1"))
+    with pytest.raises(RuntimeError,match='Archive history would be lost'):command.downgrade(config,'0021_temporary_password')
+    with engine.connect() as db:assert db.execute(text('SELECT title FROM documents WHERE id=1')).scalar()=='Preserved original'
+    engine.dispose()
+
+
+
+def test_archived_destination_can_be_reused_without_overwriting_on_restore(files):
+    c,_,_=files
+    query={'path':'Company/Reused/a.pdf','subject_kind':'company','expected_version':0}
+    payload=b'%PDF-1.7\n% fictitious destination\n%%EOF'
+    first=c.post('/ops/files/batch/item',params=query,content=payload,headers={'Content-Type':'application/pdf'})
+    assert first.status_code==201,first.text
+    identity=c.get('/ops/files/documents').json()['items'][0]['id']
+    action={'expected_version':1,'reason':'Retirar documento de prueba','confirmed':True}
+    assert c.post(f'/ops/files/documents/{identity}/archive',json=action).status_code==200
+    second=c.post('/ops/files/batch/item',params=query,content=payload,headers={'Content-Type':'application/pdf'})
+    assert second.status_code==201,second.text
+    assert c.get('/ops/files/documents').json()['total']==1
+    assert c.post(f'/ops/files/documents/{identity}/restore',json=action).status_code==409
+    assert c.get('/ops/files/documents?archived=true').json()['total']==1

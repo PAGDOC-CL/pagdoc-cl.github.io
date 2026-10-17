@@ -549,3 +549,62 @@ def test_soap_coverage_is_saved_and_returned_separately_from_emission(files):
     assert result['valid_from']=='2026-03-01' and result['issued_on'] is None
     assert result['expires_on']=='2027-03-31'
     assert c.get('/ops/files/documents',params={'document_type':'soap'}).json()['total']==1
+
+
+
+def test_worker_short_name_allows_extra_names_only_on_one_line_and_without_other_candidates(files):
+    c,_,_=files
+    with core.SessionLocal() as db:
+        worker=db.get(core.Worker,1);worker.full_name='Andres Ficticio';db.commit()
+        assert analysis.worker_identity_confirmed(db,worker,'Certifica a:\nANDRES SEGUNDO FICTICIO PRUEBA - RUN 12.345.678-5')
+        assert not analysis.worker_identity_confirmed(db,worker,'Andres firmó arriba\nFicticio firmó abajo')
+        assert not analysis.worker_identity_confirmed(db,worker,'Andresito Ficticio')
+        db.add(core.Worker(tenant_id=1,full_name='Andres Segundo Ficticio Prueba'));db.commit()
+        assert not analysis.worker_identity_confirmed(db,worker,'ANDRES SEGUNDO FICTICIO PRUEBA - RUN 12.345.678-5')
+
+
+def test_digital_epp_with_signature_image_is_not_forced_through_ocr(monkeypatch):
+    import document_tools as tools
+    monkeypatch.setattr(tools,'pdf_pages',lambda *_:1)
+    monkeypatch.setattr(tools,'pdf_image_pages',lambda *_,**kw:({1},set()))
+    def fake_command(args,directory,timeout=35):
+        Path(args[-1]).write_text('FORMULARIO DE ENTREGA DE ELEMENTOS DE PROTECCION PERSONAL. Fecha entrega 13-02-2026. Guantes. Casco. Alcohol gel.')
+    monkeypatch.setattr(tools,'command',fake_command)
+    monkeypatch.setattr(tools,'ocr_deep',lambda *_:pytest.fail('Digital EPP is readable; signature is not a scanned page'))
+    text,notes,method=tools.extract(b'%PDF-fictitious','application/pdf')
+    result=analysis.interpret(text,notes,method)
+    assert method=='pdf_text' and result['document_type']=='epp'
+    assert result['no_expiry'] and result['expires_on'] is None
+
+
+
+@pytest.mark.parametrize('text,name,kind',[
+    ('Contrato de trabajo. Fecha de vencimiento: 01/01/2020',None,'contrato'),
+    ('Anexo laboral sin fechas',None,'contrato'),
+    ('Certificado de afiliación a salud',None,'afiliacion'),
+    ('Certificado de cotizaciones',None,'cotizaciones'),
+    ('','Contrato_Ficticio.pdf','contrato'),
+    ('','Imagen de WhatsApp 2026-01-01.jpg','whatsapp'),
+    ('','IMG-20260101-WA0001.png','whatsapp'),
+])
+def test_explicit_internal_validity_policy(text,name,kind):
+    result=analysis.interpret(text,file_name=name)
+    assert result['document_type']==kind and result['validity_exempt']
+
+
+def test_policy_filename_does_not_override_medical_or_insurance_content():
+    for text in ['Alcohol y drogas','Examen preocupacional','SOAP']:
+        assert not analysis.interpret(text,file_name='Contrato.pdf')['validity_exempt']
+    assert not analysis.interpret('',file_name='WhatsApp.pdf')['validity_exempt']
+
+
+def test_internal_policy_keeps_expired_date_visible_but_green(files):
+    c,_,_=files;identity=create(c,expires_on='2020-01-01')
+    assert upload(c,identity,filename='Contrato.pdf').status_code==201
+    with core.SessionLocal() as db:
+        assert analysis.process_next(db,extractor=lambda *_:('Contrato de trabajo. Fecha de vencimiento: 01/01/2020',[],'pdf_text'))
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='policy_valid' and result['validity_exempt']
+    assert result['expires_on']=='2020-01-01' and result['traffic_light']=='valid'
+    assert c.get('/ops/files/documents').json()['items'][0]['expiry_status']=='valid'
+    assert c.get('/ops/files/analysis/status').json()['counts']['policy_valid']==1

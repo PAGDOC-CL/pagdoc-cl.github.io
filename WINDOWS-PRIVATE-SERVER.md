@@ -510,3 +510,25 @@ La extracción identifica imágenes de tamaño significativo dentro de PDF aunqu
 El resumen muestra versión de reglas, cola restante y motivos agregados de revisión: OCR, identidad, fechas, emisión de alcohol/drogas, lectura parcial/fallida y otros. Un documento puede presentar varios motivos. Permite comprobar cuándo termina la nueva cola y cuántos casos siguen necesitando revisión. Las cifras reales solo se pueden confirmar en la instancia privada.
 
 Para trabajadores, además del nombre completo, se admite coincidencia exacta del identificador numérico registrado de formato RUT, con separadores opcionales y límites completos. No hay coincidencia difusa de nombres ni se crean identificadores. Esto compara contra la ficha interna; no valida identidad ante organismos externos.
+
+
+### Reglas 7: SOAP y gráficos en PDF digitales
+
+El SOAP se clasifica como seguro obligatorio y reconoce el rango explícito «RIGE DESDE: fecha HASTA: fecha» (también vigente/vigencia desde). Inicio de cobertura y emisión son campos distintos: el rango no inventa una fecha de emisión. Copias con el mismo rango se deduplican; rangos inválidos, invertidos, futuros o contradictorios requieren revisión. Un SOAP sin rango no se convierte en vigente sin vencimiento.
+
+Una página con fecha digital inequívoca no se degrada por OCR de gráficos pequeños, firmas o logotipos. Las imágenes que ocupan al menos 60% del área física de la página, según su resolución, siguen requiriendo OCR para comprobar capas de texto de escaneos. Páginas sin fecha digital segura mantienen OCR de regiones significativas. No se modifica ningún archivo original. Reglas anteriores se reprocesan con la nueva versión, preservando confirmaciones humanas.
+
+La corrección se validó además de los casos sintéticos con un PDF privado aportado por el usuario, sin incluir su archivo, su texto ni sus identificadores en este repositorio público. Esto no demuestra que todos los documentos pendientes compartan la misma causa.
+
+Reglas 7 también reconoce entrega de EPP en texto digital: una firma pequeña no obliga a OCR cuando la lectura completa no contiene vencimiento. Las fechas de entrega no se transforman en caducidad. Para trabajadores registrados con nombre corto se admite la secuencia exacta de sus palabras en una sola línea, con nombres adicionales intermedios, únicamente cuando ningún otro trabajador de la empresa también coincide. Nombres repartidos en varias líneas, coincidencias parciales de palabras y candidatos ambiguos no se aceptan por esa vía.
+
+Política de vigencia interna solicitada: contratos y anexos, certificados de afiliación o cotizaciones e imágenes identificadas como WhatsApp se muestran vigentes por política interna. Las fechas impresas y registradas se conservan visibles, sin alterar su contenido. No supone aprobación ni acreditación externa. Se registra el estado `policy_valid`. Los nombres de archivos contractuales y certificados permiten aplicar la política cuando no se puede leer el contenido, dejando la advertencia de lectura visible. Esa pista no prevalece si el contenido identifica alcohol/drogas, exámenes ocupacionales o SOAP. Imágenes de WhatsApp solo se reconocen por nombre explícito y extensión de imagen.
+
+
+### Eliminar documentación y Papelera (migración 0022)
+
+Administradores y editores pueden pulsar Eliminar en un archivo, comprobar el nombre, escribir motivo y confirmar expresamente. Se retira de carpetas, listados, requisitos activos, alertas y contadores. La Papelera permite restaurarlo con confirmación. Originales cifrados y versiones no se borran y no se libera espacio físico; es una retirada reversible. Se conservan eventos de retirada/restauración con actor, fecha y motivo. No hay borrado masivo automático.
+
+Cada acción comprueba empresa, permiso de edición, CSRF y versión vigente. Un documento con protección de conservación no se puede retirar. Los documentos retirados quedan excluidos por defecto de las consultas ORM; únicamente las rutas de Papelera/restauración pueden incluirlos, siempre limitados a la empresa. No se pueden descargar ni reemplazar mientras estén retirados. La migración agrega campos de archivo y eventos sin modificar documentos existentes; el controlador aplica la migración al arrancar.
+
+Una ruta retirada se puede reutilizar para otra carga. Si otro documento activo ocupa su destino, restaurar devuelve conflicto y no sobrescribe el nuevo archivo. El anterior permanece en la Papelera.

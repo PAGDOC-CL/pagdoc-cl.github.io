@@ -19,8 +19,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pwdlib import PasswordHash
 from password_policy import valid_password, MESSAGE
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, delete, func, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, create_engine, delete, event, func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker, with_loader_criteria
 
 DB_URL = os.getenv("PAGDOC_DATABASE_URL", "sqlite:///./pagdoc_dev.sqlite3")
 SECRET = os.getenv("PAGDOC_SECRET_KEY", "")
@@ -122,6 +122,25 @@ class Document(Base):
     subject_type: Mapped[str] = mapped_column(String(30))
     subject_name: Mapped[str] = mapped_column(String(150))
     expires_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
+class DocumentArchiveEvent(Base):
+    __tablename__='document_archive_events'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    tenant_id:Mapped[int]=mapped_column(ForeignKey('tenants.id'))
+    document_id:Mapped[int]=mapped_column(ForeignKey('documents.id'))
+    user_id:Mapped[int]=mapped_column(ForeignKey('users.id'))
+    action:Mapped[str]=mapped_column(String(10))
+    reason:Mapped[str]=mapped_column(String(300))
+    at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+
+@event.listens_for(Session,'do_orm_execute')
+def exclude_archived_documents(execute_state):
+    if execute_state.is_select and not execute_state.is_column_load and not execute_state.execution_options.get('include_archived',False):
+        execute_state.statement=execute_state.statement.options(with_loader_criteria(Document,lambda cls:cls.archived_at.is_(None),include_aliases=True))
 
 
 class Audit(Base):

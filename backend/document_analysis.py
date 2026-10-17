@@ -180,7 +180,7 @@ def confirm_analysis(document_id:int,data:ConfirmAnalysis,user:core.Editor,db:co
     result['revision']=result.get('revision',0)+1
     result.update(document_type=data.document_type,issued_on=data.issued_on.isoformat() if data.issued_on else None,expires_on=data.expires_on.isoformat(),confirmed_by=user.id,confirmation_reason=data.reason)
     result.update(rules_version=ANALYSIS_RULES_VERSION,expiry_rule='emision_mas_30_dias' if data.document_type=='alcohol_drogas' else None,validity_days=DRUG_VALIDITY_DAYS if data.document_type=='alcohol_drogas' else None)
-    row.rules_version=ANALYSIS_RULES_VERSION;row.result_json=json.dumps(result,ensure_ascii=False);row.status='confirmed';doc.expires_on=data.expires_on
+    row.rules_version=ANALYSIS_RULES_VERSION;row.result_json=json.dumps(result,ensure_ascii=False);row.status='policy_valid' if data.document_type in POLICY_VALID_TYPES else 'confirmed';result['validity_exempt']=data.document_type in POLICY_VALID_TYPES;row.result_json=json.dumps(result,ensure_ascii=False);doc.expires_on=data.expires_on
     core.add_audit(db,user,'document.analysis_confirm','document',doc.id);db.commit()
     return analysis_payload(row,doc,data.expected_version)
 
@@ -220,13 +220,15 @@ def process_next(db,extractor=extract):
     if file is None:return False
     identity=(file.id,file.document_id,file.tenant_id,file.version,file.created_by_user_id)
     row=db.scalar(select(FileAnalysis).where(FileAnalysis.file_version_id==file.id))
-    if row and row.status=='confirmed':
+    if row and (row.status=='confirmed' or json.loads(row.result_json or '{}').get('confirmed_by')):
         doc=db.scalar(select(core.Document).where(core.Document.id==file.document_id,core.Document.tenant_id==file.tenant_id).with_for_update());user=db.get(core.User,file.created_by_user_id)
         if doc is None:
             row.status='superseded';row.rules_version=ANALYSIS_RULES_VERSION;db.commit();return True
         if latest_version(db,file.tenant_id,doc.id)!=file.version:row.status='superseded'
         else:
             result=json.loads(row.result_json)
+            if result.get('document_type') in POLICY_VALID_TYPES:
+                row.status='policy_valid';result['validity_exempt']=True
             if result.get('document_type')=='alcohol_drogas':
                 issued=parse_date(result.get('issued_on') or '')
                 result['previous_policy']={key:result.get(key) for key in ['issued_on','expires_on','expiry_rule']}
@@ -274,7 +276,7 @@ def process_next(db,extractor=extract):
     row=db.get(FileAnalysis,analysis_id)
     if doc is None or doc.archived_at is not None:
         row.status='superseded';db.commit();return True
-    if row.status=='confirmed':return True
+    if row.status=='confirmed' or json.loads(row.result_json or '{}').get('confirmed_by'):return True
     if latest_version(db,identity[2],doc.id)!=identity[3]:
         row.status='superseded'
     elif result.get('validity_exempt'):

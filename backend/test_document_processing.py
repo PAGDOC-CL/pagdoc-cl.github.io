@@ -608,3 +608,15 @@ def test_internal_policy_keeps_expired_date_visible_but_green(files):
     assert result['expires_on']=='2020-01-01' and result['traffic_light']=='valid'
     assert c.get('/ops/files/documents').json()['items'][0]['expiry_status']=='valid'
     assert c.get('/ops/files/analysis/status').json()['counts']['policy_valid']==1
+
+
+
+def test_internal_policy_also_covers_human_confirmed_contracts_without_changing_dates(files):
+    c,_,_=files;identity=create(c,expires_on='2020-01-01');assert upload(c,identity,filename='Contrato.pdf').status_code==201
+    with core.SessionLocal() as db:
+        version=db.scalar(select(analysis.DocumentFileVersion).where(analysis.DocumentFileVersion.document_id==identity))
+        db.add(analysis.FileAnalysis(tenant_id=1,document_id=identity,file_version_id=version.id,status='confirmed',rules_version=6,result_json=json.dumps({'document_type':'contrato','expires_on':'2020-01-01','confirmed_by':1})));db.commit()
+        assert analysis.process_next(db,extractor=lambda *_:pytest.fail('Preserve human confirmation'))
+    result=c.get(f'/ops/files/documents/{identity}/analysis').json()
+    assert result['status']=='policy_valid' and result['validity_exempt']
+    assert result['expires_on']=='2020-01-01' and result['traffic_light']=='valid'

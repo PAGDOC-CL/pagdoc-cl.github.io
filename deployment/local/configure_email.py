@@ -37,7 +37,7 @@ def main():
             if port=='587':smtp.starttls(context=context)
             smtp.login(username,password)
     except Exception:raise SystemExit('No se verificó la cuenta. No se guardaron cambios. Revisa el método de autenticación admitido por tu proveedor.')
-    save_values(path,{'PAGDOC_EMAIL_DELIVERY_ENABLED':'1','PAGDOC_SMTP_HOST':host,'PAGDOC_SMTP_PORT':port,'PAGDOC_SMTP_USERNAME':username,'PAGDOC_SMTP_PASSWORD':password,'PAGDOC_SMTP_FROM':sender})
+    save_values(path,{'PAGDOC_EMAIL_DELIVERY_ENABLED':'1','PAGDOC_SMTP_AUTH_MODE':'password','PAGDOC_SMTP_HOST':host,'PAGDOC_SMTP_PORT':port,'PAGDOC_SMTP_USERNAME':username,'PAGDOC_SMTP_PASSWORD':password,'PAGDOC_SMTP_FROM':sender})
     print('Cuenta verificada y guardada de forma privada. Inicia PAGDOC para activar el servicio. No se envió ningún mensaje de prueba.')
 
 

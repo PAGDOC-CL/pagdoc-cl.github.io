@@ -60,6 +60,8 @@ case "$task" in
     ;;
   provision) "${compose[@]}" exec -e PAGDOC_ALLOW_ADMIN_PROVISIONING=YES api python provision_admin.py ;;
   configure-email) python3 "$local_dir/configure_email.py" ;;
+  configure-email-oauth) python3 "$local_dir/configure_email_oauth.py" "${@:2}" ;;
+  email-oauth-login) "${compose[@]}" exec -T api python smtp_oauth.py "${@:2}" ;;
   provision-members) "${compose[@]}" exec -e PAGDOC_ALLOW_MEMBER_PROVISIONING=YES api python provision_members.py "${@:2}" ;;
   provision-beta) "${compose[@]}" exec -e PAGDOC_ALLOW_BETA_PROVISIONING=YES api python provision_beta.py ;;
   certificate) "${compose[@]}" exec -T proxy cat /data/caddy/pki/authorities/local/root.crt ;;
@@ -69,5 +71,5 @@ case "$task" in
     sudo docker compose version
     echo 'Prerequisites available. Documents and SharePoint are not enabled by this command.'
     ;;
-  *) echo 'Use start, stop, status, files-start, files-check, files-enable, provision, provision-members, configure-email, provision-beta, certificate, remote-install, remote-connect, remote-enable, remote-disable, remote-status, remote-check or check.' >&2; exit 2 ;;
+  *) echo 'Use start, stop, status, files-start, files-check, files-enable, provision, provision-members, configure-email, configure-email-oauth, provision-beta, certificate, remote-install, remote-connect, remote-enable, remote-disable, remote-status, remote-check or check.' >&2; exit 2 ;;
 esac

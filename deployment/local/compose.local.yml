@@ -31,6 +31,7 @@ services:
       PAGDOC_SMTP_PORT: ${PAGDOC_SMTP_PORT:-587}
       PAGDOC_SMTP_USERNAME: ${PAGDOC_SMTP_USERNAME:-}
       PAGDOC_SMTP_PASSWORD: ${PAGDOC_SMTP_PASSWORD:-}
+      PAGDOC_SMTP_AUTH_MODE: ${PAGDOC_SMTP_AUTH_MODE:-password}
       PAGDOC_PASSWORD_RESET_URL: ${PAGDOC_PASSWORD_RESET_URL:-https://localhost:8443/app}
       PAGDOC_SMTP_FROM: ${PAGDOC_SMTP_FROM:-}
     volumes: [file_objects:/var/lib/pagdoc-files]

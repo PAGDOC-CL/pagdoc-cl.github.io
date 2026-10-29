@@ -54,6 +54,11 @@ class PreferenceIn(BaseModel):
 
 
 def smtp_configured():
+    mode=os.getenv('PAGDOC_SMTP_AUTH_MODE','password')
+    if mode=='microsoft_oauth':
+        from smtp_oauth import configured,HOST
+        return os.getenv('PAGDOC_EMAIL_DELIVERY_ENABLED')=='1' and os.getenv('PAGDOC_SMTP_HOST')==HOST and os.getenv('PAGDOC_SMTP_PORT','587')=='587' and os.getenv('PAGDOC_SMTP_FROM')==os.getenv('PAGDOC_SMTP_USERNAME') and configured()
+    if mode!='password':return False
     return os.getenv('PAGDOC_EMAIL_DELIVERY_ENABLED') == '1' and all(os.getenv(key) for key in ('PAGDOC_SMTP_HOST','PAGDOC_SMTP_USERNAME','PAGDOC_SMTP_PASSWORD','PAGDOC_SMTP_FROM')) and os.getenv('PAGDOC_SMTP_PORT','587') in {'465','587'}
 
 
@@ -117,10 +122,19 @@ def smtp_send(recipient,counts,today):
 def send_message(message,recipient):
     sender=os.environ['PAGDOC_SMTP_FROM'];Address(addr_spec=sender);Address(addr_spec=recipient)
     host=os.environ['PAGDOC_SMTP_HOST'];port=int(os.getenv('PAGDOC_SMTP_PORT','587'));context=ssl.create_default_context()
+    mode=os.getenv('PAGDOC_SMTP_AUTH_MODE','password')
+    if mode not in {'password','microsoft_oauth'}:raise ValueError('Método SMTP inválido.')
+    if mode=='microsoft_oauth':
+        from smtp_oauth import HOST,access_token,authenticate
+        if host!=HOST or port!=587 or sender!=os.environ['PAGDOC_SMTP_USERNAME']:raise ValueError('Configuración Microsoft OAuth inválida.')
+        token=access_token(os.environ['PAGDOC_SMTP_USERNAME'])
     connection=smtplib.SMTP_SSL(host,port,timeout=30,context=context) if port==465 else smtplib.SMTP(host,port,timeout=30)
     with connection as smtp:
         if port==587:smtp.starttls(context=context)
-        smtp.login(os.environ['PAGDOC_SMTP_USERNAME'],os.environ['PAGDOC_SMTP_PASSWORD'])
+        if mode=='microsoft_oauth':
+            smtp.ehlo()
+            authenticate(smtp,os.environ['PAGDOC_SMTP_USERNAME'],token)
+        else:smtp.login(os.environ['PAGDOC_SMTP_USERNAME'],os.environ['PAGDOC_SMTP_PASSWORD'])
         smtp.send_message(message,from_addr=sender,to_addrs=[recipient])
 
 

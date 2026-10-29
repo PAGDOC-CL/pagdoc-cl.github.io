@@ -93,6 +93,29 @@ def test_device_flow_expiration_and_untrusted_uri():
         oauth.device_login(TENANT,CLIENT,USER,request=lambda *a:{**flow,'verification_uri':'https://example.invalid/phish'})
 
 
+@pytest.mark.parametrize('uri', ['https://login.microsoft.com/device',
+                                'https://microsoft.com/devicelogin',
+                                'https://www.microsoft.com/devicelogin',
+                                'https://login.microsoftonline.com/common/oauth2/deviceauth'])
+def test_device_flow_accepts_official_verification_addresses(uri):
+    responses=iter([{'device_code':'private','user_code':'DEMO','verification_uri':uri,'expires_in':900},
+                    {'access_token':'fictitious-access','refresh_token':'fictitious-refresh',
+                     'scope':oauth.SCOPE,'expires_in':3600}])
+    data=oauth.device_login(TENANT,CLIENT,USER,request=lambda *a:next(responses),sleep=lambda n:None,clock=lambda:0)
+    assert data['username']==USER
+
+
+@pytest.mark.parametrize('uri', ['http://login.microsoft.com/device',
+    'https://login.microsoft.com.evil.invalid/device', 'https://login.microsoft.com/other',
+    'https://user@login.microsoft.com/device', 'https://login.microsoft.com:444/device',
+    'https://login.microsoft.com/device?next=https://example.invalid',
+    'https://login.microsoft.com/device#fragment'])
+def test_device_flow_rejects_lookalike_or_modified_addresses(uri):
+    with pytest.raises(oauth.OAuthError,match='inesperada'):
+        oauth.device_login(TENANT,CLIENT,USER,request=lambda *a:{'device_code':'private',
+            'user_code':'DEMO','verification_uri':uri,'expires_in':900})
+
+
 def test_authentication_uses_xoauth2_without_resending_secret():
     smtp=Mock();oauth.authenticate(smtp,USER,'fictitious-token')
     mechanism,callback=smtp.auth.call_args.args
@@ -117,6 +140,7 @@ def test_smtp_check_requires_tls_before_authentication(monkeypatch):
 
 
 def test_email_alerts_oauth_and_existing_password_paths(monkeypatch,storage):
+    monkeypatch.setenv('PAGDOC_SECRET_KEY','fictitious-test-secret-key-of-at-least-32-characters')
     import email_alerts as alerts
     calls=[]
     class SMTP:

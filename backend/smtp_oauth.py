@@ -96,7 +96,12 @@ def device_login(tenant, client, username, request=post, sleep=time.sleep, clock
         fail(flow)
     uri = flow.get('verification_uri', '')
     parsed = urlsplit(uri)
-    if parsed.scheme != 'https' or parsed.hostname not in {'microsoft.com', 'www.microsoft.com', 'login.microsoftonline.com'} or parsed.username or parsed.fragment:
+    allowed = {('microsoft.com', '/devicelogin'), ('www.microsoft.com', '/devicelogin'),
+               ('login.microsoftonline.com', '/common/oauth2/deviceauth'),
+               ('login.microsoft.com', '/device')}
+    if (parsed.scheme != 'https' or (parsed.hostname, parsed.path.rstrip('/')) not in allowed
+            or parsed.username or parsed.password or parsed.fragment or parsed.query
+            or parsed.port not in {None, 443}):
         raise OAuthError('Dirección de autorización inesperada.')
     interval = max(5, min(int(flow.get('interval', 5)), 60))
     deadline = clock() + min(max(int(flow.get('expires_in', 900)), 1), 1800)
